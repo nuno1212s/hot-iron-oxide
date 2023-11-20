@@ -1,0 +1,11 @@
+[package]
+name = "hot-iron-oxide"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+atlas-common = { path = "../Atlas/Atlas-Common" }
+atlas-core = { path = "../Atlas/Atlas-Core" }
+atlas-communication = { path = "../Atlas/Atlas-Communication" }
