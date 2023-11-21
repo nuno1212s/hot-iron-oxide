@@ -5,11 +5,12 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::{DecisionMetadata, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, OrderProtocolTolerance, ProtocolMessage};
 use atlas_core::smr::smr_decision_log::ShareableConsensusMessage;
 use atlas_core::timeouts::RqTimeout;
+use crate::messages::serialize::HotIronOxSer;
 use crate::view::View;
 
-mod decisions;
-mod messages;
-mod view;
+pub mod decisions;
+pub mod messages;
+pub mod view;
 
 pub struct HotStuff<D, NT> {
     node_id: NodeId,
@@ -39,7 +40,7 @@ impl<D, NT> Orderable for HotStuff<D, NT> {
 }
 
 impl<D, NT> OrderingProtocol<D, NT> for HotStuff<D, NT> {
-    type Serialization = ();
+    type Serialization = HotIronOxSer<>;
     type Config = ();
 
     fn initialize(config: Self::Config, args: OrderingProtocolArgs<D, NT>) -> Result<Self> where Self: Sized {

@@ -1,20 +1,36 @@
 use std::collections::VecDeque;
 use atlas_common::ordering::tbo_queue_message;
 use atlas_core::smr::smr_decision_log::ShareableMessage;
-use crate::messages::{HotStuffMessage, HotStuffOrderProtocolMessage};
+use crate::messages::{HotIronOxMsg, HotStuffOrderProtocolMessage};
+
+
+macro_rules! extract_msg {
+    ($g:expr, $q:expr) => {
+        extract_msg!(DecisionPollStatus::Recv, $g, $q)
+    };
+    ($rsp:expr, $g:expr, $q:expr) => {
+        if let Some(stored) = $q.pop_front() {
+
+            DecisionPollStatus::NextMessage(stored)
+        } else {
+            *$g = false;
+            $rsp
+        }
+    };
+}
+
 
 pub struct HotStuffTBOQueue {
     get_queue: bool,
-    new_view: VecDeque<ShareableMessage<HotStuffMessage>>,
-    prepare: VecDeque<ShareableMessage<HotStuffMessage>>,
-    pre_commit: VecDeque<ShareableMessage<HotStuffMessage>>,
-    commit: VecDeque<ShareableMessage<HotStuffMessage>>,
-    decide: VecDeque<ShareableMessage<HotStuffMessage>>
+    new_view: VecDeque<ShareableMessage<HotIronOxMsg>>,
+    prepare: VecDeque<ShareableMessage<HotIronOxMsg>>,
+    pre_commit: VecDeque<ShareableMessage<HotIronOxMsg>>,
+    commit: VecDeque<ShareableMessage<HotIronOxMsg>>,
+    decide: VecDeque<ShareableMessage<HotIronOxMsg>>,
 }
 
 impl HotStuffTBOQueue {
-
-    pub fn queue_message(&mut self, message: ShareableMessage<HotStuffMessage>) {
+    pub fn queue_message(&mut self, message: ShareableMessage<HotIronOxMsg>) {
         self.get_queue = true;
 
         match message.message().kind() {
@@ -36,4 +52,11 @@ impl HotStuffTBOQueue {
         }
     }
 
+    pub fn signal(&mut self) {
+        self.get_queue = true;
+    }
+
+    pub fn should_poll(&self) -> bool {
+        self.get_queue
+    }
 }
