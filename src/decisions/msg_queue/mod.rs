@@ -20,24 +20,24 @@ macro_rules! extract_msg {
 }
 
 
-pub struct HotStuffTBOQueue {
+pub struct HotStuffTBOQueue<D> {
     get_queue: bool,
-    new_view: VecDeque<ShareableMessage<HotIronOxMsg>>,
-    prepare: VecDeque<ShareableMessage<HotIronOxMsg>>,
-    pre_commit: VecDeque<ShareableMessage<HotIronOxMsg>>,
-    commit: VecDeque<ShareableMessage<HotIronOxMsg>>,
-    decide: VecDeque<ShareableMessage<HotIronOxMsg>>,
+    new_view: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
+    prepare: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
+    pre_commit: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
+    commit: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
+    decide: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
 }
 
-impl HotStuffTBOQueue {
-    pub fn queue_message(&mut self, message: ShareableMessage<HotIronOxMsg>) {
+impl<D> HotStuffTBOQueue<D> {
+    pub fn queue_message(&mut self, message: ShareableMessage<HotIronOxMsg<D>>) {
         self.get_queue = true;
 
         match message.message().kind() {
             HotStuffOrderProtocolMessage::NewView(_) => {
                 self.new_view.push_back(message)
             }
-            HotStuffOrderProtocolMessage::Prepare(_) => {
+            HotStuffOrderProtocolMessage::Prepare(_, _) => {
                 self.prepare.push_back(message)
             }
             HotStuffOrderProtocolMessage::PreCommit(_) => {

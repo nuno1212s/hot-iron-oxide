@@ -9,3 +9,6 @@ edition = "2021"
 atlas-common = { path = "../Atlas/Atlas-Common" }
 atlas-core = { path = "../Atlas/Atlas-Core" }
 atlas-communication = { path = "../Atlas/Atlas-Communication" }
+
+anyhow = "1.0.75"
+thiserror = "1.0.50"

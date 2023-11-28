@@ -10,7 +10,7 @@ use crate::decisions::DecisionNode;
 pub struct QC<D> {
     qc_type: QCType,
     view_seq: SeqNo,
-    decision_node: DecisionNode<D>
+    decision_node: DecisionNode<D>,
 }
 
 impl<D> QC<D> {
@@ -30,7 +30,7 @@ impl<D> QC<D> {
 pub enum QCType {
     PrepareVote,
     PreCommitVote,
-    CommitVote
+    CommitVote,
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
@@ -46,13 +46,15 @@ pub struct HotIronOxMsg<D> {
 pub enum HotStuffOrderProtocolMessage<D> {
     NewView(Option<QC<D>>),
     Prepare(DecisionNode<D>, Option<QC<D>>),
+    PrepareVote(DecisionNode<D>, Signature),
     PreCommit(QC<D>),
-    Commit(Signature),
-    Decide(QC<D>)
+    PreCommitVote(DecisionNode<D>, Signature),
+    Commit(QC<D>),
+    CommitVote(DecisionNode<D>, Signature),
+    Decide(QC<D>),
 }
 
 impl<D> HotIronOxMsg<D> {
-
     pub fn message(view: SeqNo, message: HotStuffOrderProtocolMessage<D>) -> Self {
         HotIronOxMsg {
             curr_view: view,
@@ -67,7 +69,6 @@ impl<D> HotIronOxMsg<D> {
     pub fn into_kind(self) -> HotStuffOrderProtocolMessage<D> {
         self.message
     }
-
 }
 
 impl Orderable for HotIronOxMsg {

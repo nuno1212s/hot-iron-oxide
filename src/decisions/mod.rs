@@ -2,6 +2,7 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::signature::Signature;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::messages::StoredRequestMessage;
+use crate::messages::QC;
 use crate::view::View;
 
 mod decision;
@@ -20,6 +21,22 @@ pub struct DecisionNode<D> {
 }
 
 pub struct DecisionTree {}
+
+pub struct DecisionHandler<D> {
+
+}
+
+impl<D> DecisionHandler<D> {
+
+    fn safe_node(&self, node: &DecisionNode<D>, qc: &QC<D>) -> bool {
+        todo!("Implement this according to our tree")
+    }
+
+    fn latest_qc(&self) -> Option<QC<D>> {
+        todo!("Implement this according to our tree")
+    }
+
+}
 
 impl Orderable for DecisionNodeHeader {
     fn sequence_number(&self) -> SeqNo {
@@ -64,6 +81,24 @@ impl<D> DecisionNode<D> {
         Self {
             decision_header: DecisionNodeHeader::initialize_root_node(view, digest),
             client_commands,
+        }
+    }
+    
+    fn has_previous(&self) -> bool {
+        self.decision_header.previous_block.is_some()
+    }
+
+    fn extends_from(&self, prev_node: &DecisionNode<D>) -> bool {
+        let previous_node = self.decision_header.previous_block;
+
+        if let Some(digest) = previous_node {
+            if digest == prev_node.decision_header.current_block_digest {
+                true
+            } else {
+                false
+            }
+        } else {
+            false
         }
     }
     
