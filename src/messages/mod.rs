@@ -71,13 +71,13 @@ impl<D> HotIronOxMsg<D> {
     }
 }
 
-impl Orderable for HotIronOxMsg {
+impl<D> Orderable for HotIronOxMsg<D> {
     fn sequence_number(&self) -> SeqNo {
         self.curr_view
     }
 }
 
-impl Orderable for QC {
+impl<D> Orderable for QC<D> {
     fn sequence_number(&self) -> SeqNo {
         self.view_seq
     }
