@@ -2,8 +2,7 @@ use std::sync::Arc;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_core::ordering_protocol::{DecisionMetadata, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, OrderProtocolTolerance, ProtocolMessage};
-use atlas_core::smr::smr_decision_log::ShareableConsensusMessage;
+use atlas_core::ordering_protocol::{DecisionMetadata, OPExecResult, OPPollResult, OrderingProtocol, OrderProtocolTolerance, ProtocolMessage, ShareableConsensusMessage};
 use atlas_core::timeouts::RqTimeout;
 use crate::messages::serialize::HotIronOxSer;
 use crate::view::View;
@@ -39,13 +38,9 @@ impl<D, NT> Orderable for HotStuff<D, NT> {
     }
 }
 
-impl<D, NT> OrderingProtocol<D, NT> for HotStuff<D, NT> {
-    type Serialization = HotIronOxSer<>;
+impl<D, NT> OrderingProtocol<D> for HotStuff<D, NT> {
+    type Serialization = HotIronOxSer<D>;
     type Config = ();
-
-    fn initialize(config: Self::Config, args: OrderingProtocolArgs<D, NT>) -> Result<Self> where Self: Sized {
-        todo!()
-    }
 
     fn handle_off_ctx_message(&mut self, message: ShareableConsensusMessage<D, Self::Serialization>) {
         todo!()
@@ -55,11 +50,11 @@ impl<D, NT> OrderingProtocol<D, NT> for HotStuff<D, NT> {
         todo!()
     }
 
-    fn poll(&mut self) -> Result<OPPollResult<DecisionMetadata<D, Self::Serialization>, ProtocolMessage<D, Self::Serialization>, D::Request>> {
+    fn poll(&mut self) -> Result<OPPollResult<DecisionMetadata<D, Self::Serialization>, ProtocolMessage<D, Self::Serialization>, D>> {
         todo!()
     }
 
-    fn process_message(&mut self, message: ShareableConsensusMessage<D, Self::Serialization>) -> Result<OPExecResult<DecisionMetadata<D, Self::Serialization>, ProtocolMessage<D, Self::Serialization>, D::Request>> {
+    fn process_message(&mut self, message: ShareableConsensusMessage<D, Self::Serialization>) -> Result<OPExecResult<DecisionMetadata<D, Self::Serialization>, ProtocolMessage<D, Self::Serialization>, D>> {
         todo!()
     }
 
@@ -67,7 +62,7 @@ impl<D, NT> OrderingProtocol<D, NT> for HotStuff<D, NT> {
         todo!()
     }
 
-    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<OPExecResult<DecisionMetadata<D, Self::Serialization>, ProtocolMessage<D, Self::Serialization>, D::Request>> {
+    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<OPExecResult<DecisionMetadata<D, Self::Serialization>, ProtocolMessage<D, Self::Serialization>, D>> {
         todo!()
     }
 }
