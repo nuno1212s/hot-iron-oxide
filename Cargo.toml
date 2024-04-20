@@ -10,5 +10,7 @@ atlas-common = { path = "../Atlas/Atlas-Common" }
 atlas-core = { path = "../Atlas/Atlas-Core" }
 atlas-communication = { path = "../Atlas/Atlas-Communication" }
 
+getset = "*"
 anyhow = "1.0"
 thiserror = "1.0"
+lazy_static = "*"

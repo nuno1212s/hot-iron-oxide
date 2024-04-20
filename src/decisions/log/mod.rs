@@ -1,5 +1,5 @@
 use thiserror::Error;
-use atlas_common::crypto::signature::Signature;
+use atlas_common::crypto::threshold_crypto::PartialSignature;
 
 use atlas_common::Err;
 use atlas_common::error::*;
@@ -14,13 +14,13 @@ pub enum PrepareLog<D> {
         received_prepare_certificate: Vec<QC<D>>,
         highest_prepare_certificate: Option<QC<D>>,
     },
-    Replica {},
+    Replica,
 }
 
 pub enum PreCommitLog<D> {
     Leader {
         decision_node: Option<DecisionNode<D>>,
-        received_precommit_votes: Vec<Signature>,
+        received_precommit_votes: Vec<PartialSignature>,
     },
     Replica,
 }
@@ -28,7 +28,7 @@ pub enum PreCommitLog<D> {
 pub enum CommitLog<D> {
     Leader {
         decision_node: Option<DecisionNode<D>>,
-        received_commit_votes: Vec<Signature>,
+        received_commit_votes: Vec<PartialSignature>,
     },
     Replica,
 }
@@ -41,7 +41,7 @@ pub struct DecisionLog<D> {
 }
 
 impl<D> DecisionLog<D> {
-    pub fn handle_new_view_prepareQC_received(&mut self, view: &View, message: QC<D>) {
+    pub fn handle_new_view_prepare_QC_received(&mut self, view: &View, message: QC<D>) {
         match &mut self.prepare_log {
             PrepareLog::Leader { received_prepare_certificate, .. } => {
                 received_prepare_certificate.push(message);
@@ -50,7 +50,7 @@ impl<D> DecisionLog<D> {
         }
     }
 
-    pub fn populate_highest_prepareQC(&mut self, view: &View) -> Result<Option<&QC<D>>> {
+    pub fn populate_highest_prepare_QC(&mut self, view: &View) -> Result<Option<&QC<D>>> {
         match &mut self.prepare_log {
             PrepareLog::Leader { received_prepare_certificate, highest_prepare_certificate } => {
                 if received_prepare_certificate.is_empty() {
@@ -67,11 +67,32 @@ impl<D> DecisionLog<D> {
         }
     }
 
-    pub fn queue_prepare_vote(&mut self, view: &View, node: &DecisionNode<D>, prepare_certificate: Signature) {
-        todo!()
+    pub fn queue_prepare_vote(&mut self, view: &View, node: &DecisionNode<D>, prepare_certificate: PartialSignature) {
+        match &mut self.pre_commit_log {
+            PreCommitLog::Leader { received_precommit_votes, decision_node } => {
+                if let Some(current_node) = decision_node {
+                    if current_node != *node {
+                        return;
+                    }
+                } else {
+                    *decision_node = Some(node.clone());
+                }
+
+                received_precommit_votes.push(prepare_certificate);
+            }
+            PreCommitLog::Replica => {}
+        }
     }
 
-    pub fn make_prepare_certificate(&self, view: &View) -> Result<QC<D>> {
+    pub fn make_prepare_certificate(&mut self, view: &View) -> Result<QC<D>> {
+        match &self.pre_commit_log {
+            PreCommitLog::Leader {
+                decision_node,
+                received_precommit_votes
+            } => {}
+            PreCommitLog::Replica => {}
+        }
+
         todo!()
     }
 }

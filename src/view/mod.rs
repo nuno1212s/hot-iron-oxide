@@ -10,7 +10,7 @@ pub struct View {
     seq: SeqNo,
     members: Vec<NodeId>,
     leader: NodeId,
-    f: usize
+    f: usize,
 }
 
 impl Orderable for View {

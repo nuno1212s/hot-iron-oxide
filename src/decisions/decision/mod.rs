@@ -6,7 +6,8 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::smr::smr_decision_log::ShareableMessage;
+use atlas_core::ordering_protocol::ShareableMessage;
+use crate::crypto::{CryptoInformationProvider, get_partial_signature_for_message};
 use crate::decisions::{DecisionHandler, DecisionNode};
 use crate::decisions::log::DecisionLog;
 use crate::decisions::msg_queue::HotStuffTBOQueue;
@@ -80,8 +81,12 @@ impl<D> Decision<D> {
     }
 
     /// Process a given consensus message
-    pub fn process_message<NT>(&mut self, network: Arc<NT>, message: ShareableMessage<HotIronOxMsg<D>>, dec_handler: &DecisionHandler<D>) -> Result<DecisionResult<D>>
-        where NT: OrderProtocolSendNode<D, HotIronOxSer<D>> {
+    pub fn process_message<NT, CR>(&mut self, network: Arc<NT>,
+                                   message: ShareableMessage<HotIronOxMsg<D>>,
+                                   dec_handler: &DecisionHandler<D>,
+                                   crypto: &CR) -> Result<DecisionResult<D>>
+        where NT: OrderProtocolSendNode<D, HotIronOxSer<D>>, 
+              CR: CryptoInformationProvider {
         return match &mut self.current_state {
             DecisionState::Init => unreachable!(),
             DecisionState::Prepare(received) if self.is_leader() => {
@@ -102,13 +107,13 @@ impl<D> Decision<D> {
                 *received = i;
 
                 if let Some(certificate) = quorum_certificate {
-                    self.decision_log.handle_new_view_prepareQC_received(&self.view, certificate);
+                    self.decision_log.handle_new_view_prepare_QC_received(&self.view, certificate);
                 }
 
                 let digest = Digest::blank();
 
                 if *received >= self.view.quorum() {
-                    let qc = self.decision_log.populate_highest_prepareQC(&self.view)?;
+                    let qc = self.decision_log.populate_highest_prepare_QC(&self.view)?;
 
                     let node = if let Some(qc) = qc {
                         DecisionNode::create_leaf(qc.decision_node(), digest, Vec::new())
@@ -148,10 +153,12 @@ impl<D> Decision<D> {
                 if dec_handler.safe_node(&node, &qc) &&
                     node.extends_from(qc.decision_node())
                 {
-                    let sig = todo!();
-
-                    network.send(HotIronOxMsg::message(self.view.sequence_number(), HotStuffOrderProtocolMessage::PrepareVote(node, sig)), self.view.primary(), true);
-
+                    atlas_common::threadpool::execute(|| {
+                        let msg_signature = get_partial_signature_for_message(crypto, self.view.sequence_number(), Some(&node));
+                        
+                        let _  = network.send(HotIronOxMsg::message(self.view.sequence_number(), HotStuffOrderProtocolMessage::PrepareVote(node, msg_signature)), self.view.primary(), true);
+                    });
+                    
                     self.current_state = DecisionState::PreCommit(0);
 
                     Ok(DecisionResult::DecisionProgressed(message))
@@ -209,11 +216,7 @@ impl<D> Decision<D> {
 
                 Ok(DecisionResult::PrepareQC(qc, message))
             }
-            DecisionState::Commit if self.is_leader() => {
-
-
-
-            }
+            DecisionState::Commit if self.is_leader() => {}
             DecisionState::Commit => {
                 let signature = match message.message().clone().into_kind() {
                     HotStuffOrderProtocolMessage::NewView(_) |

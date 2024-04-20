@@ -9,18 +9,22 @@ mod decision;
 mod msg_queue;
 mod log;
 
+#[derive(PartialEq, Eq, Clone)]
 pub struct DecisionNodeHeader {
     view_no: SeqNo,
     previous_block: Option<Digest>,
     current_block_digest: Digest,
 }
 
+#[derive(PartialEq, Eq, Clone)]
 pub struct DecisionNode<D> {
     decision_header: DecisionNodeHeader,
     client_commands: Vec<StoredRequestMessage<D>>,
 }
 
-pub struct DecisionTree {}
+pub struct DecisionTree {
+    
+}
 
 pub struct DecisionHandler<D> {
 
