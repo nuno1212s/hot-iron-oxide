@@ -1,136 +1,119 @@
 pub mod serialize;
-mod msg_builder;
 
+use getset::Getters;
 use atlas_common::crypto::threshold_crypto::{PartialSignature, CombinedSignature};
 use atlas_common::ordering::{Orderable, SeqNo};
-use crate::decisions::DecisionNode;
+use crate::decisions::{DecisionNode, QC};
+
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
-/// A quorum certificate
-pub struct QC<D> {
-    qc_type: QCType,
-    view_seq: SeqNo,
-    decision_node: DecisionNode<D>,
-    // The combined signature of the quorum which voted for this QC
-    signature: CombinedSignature,
-}
-
-impl<D> QC<D> {
-    pub fn new(qc_type: QCType,
-               view_seq: SeqNo,
-               decision_node: DecisionNode<D>,
-               signature: CombinedSignature) -> Self {
-        QC {
-            qc_type,
-            view_seq,
-            decision_node,
-            signature,
-        }
-    }
-
-    pub fn qc_type(&self) -> &QCType {
-        &self.qc_type
-    }
-    pub fn view_seq(&self) -> SeqNo {
-        self.view_seq
-    }
-    pub fn decision_node(&self) -> &DecisionNode<D> {
-        &self.decision_node
-    }
-}
-
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone)]
-pub enum QCType {
-    PrepareVote,
-    PreCommitVote,
-    CommitVote,
-}
-
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone)]
-pub struct HotIronOxMsg<D> {
-    curr_view: SeqNo,
-    message: HotStuffOrderProtocolMessage<D>,
-}
-
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone)]
-pub enum HotStuffOrderProtocolMessage<D> {
+pub enum VoteType<D> {
     NewView(Option<QC<D>>),
-    Prepare(DecisionNode<D>, Option<QC<D>>),
-    PrepareVote(DecisionNode<D>, PartialSignature),
-    PreCommit(QC<D>),
-    PreCommitVote(DecisionNode<D>, PartialSignature),
-    Commit(QC<D>),
-    CommitVote(DecisionNode<D>, PartialSignature),
-    Decide(QC<D>),
+    PrepareVote(DecisionNode<D>),
+    PreCommitVote(DecisionNode<D>),
+    CommitVote(DecisionNode<D>),
 }
 
-
-#[derive(Clone)]
-pub enum VoteType {
-    PrepareVote,
-    PreCommitVote,
-    CommitVote,
-}
-
-#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Getters)]
 pub struct VoteMessage<D> {
-    vote_type: VoteType,
-    decision_node: DecisionNode<D>,
+    #[get = "pub"]
+    vote_type: VoteType<D>,
+    #[get = "pub"]
     signature: PartialSignature,
 }
 
-pub enum ProposalType {
-    Prepare,
-    PreCommit,
-    Commit,
-    Decide,
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone)]
+pub enum ProposalType<D> {
+    Prepare(DecisionNode<D>, QC<D>),
+    PreCommit(QC<D>),
+    Commit(QC<D>),
+    Decide(QC<D>),
 }
 
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Getters)]
 pub struct ProposalMessage<D> {
-    proposal_type: ProposalType,
-    quorum_certificate: QC<D>,
+    #[get = "pub"]
+    proposal_type: ProposalType<D>,
 }
 
-pub enum HotIronOxMsgType<D> {
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone)]
+pub enum HotFeOxMsgType<D> {
     Proposal(ProposalMessage<D>),
     Vote(VoteMessage<D>),
 }
 
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Getters)]
 pub struct HotFeOxMsg<D> {
     curr_view: SeqNo,
-    message: HotIronOxMsgType<D>,
+    #[get = "pub"]
+    message: HotFeOxMsgType<D>,
 }
 
-impl<D> HotIronOxMsg<D> {
-    pub fn message(view: SeqNo, message: HotStuffOrderProtocolMessage<D>) -> Self {
-        HotIronOxMsg {
-            curr_view: view,
-            message,
-        }
-    }
-
-    pub fn kind(&self) -> &HotStuffOrderProtocolMessage<D> {
-        &self.message
-    }
-
-    pub fn into_kind(self) -> HotStuffOrderProtocolMessage<D> {
-        self.message
-    }
-}
-
-impl<D> Orderable for HotIronOxMsg<D> {
+impl<D> Orderable for HotFeOxMsg<D> {
     fn sequence_number(&self) -> SeqNo {
         self.curr_view
     }
 }
 
-impl<D> Orderable for QC<D> {
-    fn sequence_number(&self) -> SeqNo {
-        self.view_seq
+impl<D> HotFeOxMsg<D> {
+    pub fn new(view: SeqNo, message: HotFeOxMsgType<D>) -> Self {
+        Self {
+            curr_view: view,
+            message,
+        }
     }
 }
 
+impl<D> From<HotFeOxMsg<D>> for HotFeOxMsgType<D> {
+    fn from(value: HotFeOxMsg<D>) -> Self {
+        value.message
+    }
+}
+
+impl<D> ProposalMessage<D> {
+    pub fn new(proposal_type: ProposalType<D>) -> Self {
+        Self {
+            proposal_type,
+        }
+    }
+}
+
+impl<D> From<ProposalMessage<D>> for ProposalType<D> {
+    fn from(value: ProposalMessage<D>) -> Self {
+        value.proposal_type
+    }
+}
+
+impl<D> VoteMessage<D> {
+    pub fn new(vote_type: VoteType<D>, sig: PartialSignature) -> Self {
+        Self {
+            vote_type,
+            signature: sig,
+        }
+    }
+    
+    pub(crate) fn into_inner(self) -> (VoteType<D>, PartialSignature) {
+        (self.vote_type, self.signature)
+    }
+}
+
+impl<D> From<VoteMessage<D>> for DecisionNode<D> {
+    fn from(value: VoteMessage<D>) -> Self {
+        match value.vote_type {
+            VoteType::PrepareVote(dn) |
+            VoteType::PreCommitVote(dn) |
+            VoteType::CommitVote(dn) => {
+                dn
+            }
+            VoteType::NewView(_) => {
+                unreachable!()
+            }
+        }
+    }
+}

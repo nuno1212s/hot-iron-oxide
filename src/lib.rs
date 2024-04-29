@@ -4,7 +4,6 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::{DecisionMetadata, OPExecResult, OPExResult, OPPollResult, OrderingProtocol, OrderProtocolTolerance, ProtocolMessage, ShareableConsensusMessage};
-use atlas_core::timeouts::RqTimeout;
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use crate::crypto::QuorumInfo;
 use crate::messages::serialize::HotIronOxSer;
@@ -24,7 +23,7 @@ pub struct HotStuff<D, NT, CR> {
     node_id: NodeId,
     current_view: View,
     network_node: Arc<NT>,
-    quorum_information: CR
+    quorum_information: CR,
 }
 
 impl<D, NT, CR> OrderProtocolTolerance for HotStuff<D, NT, CR> {
@@ -57,6 +56,9 @@ impl<D, NT, CR> TimeoutableMod<OPExResult<D, HotIronOxSer<D>>> for HotStuff<D, N
     }
 }
 
+type HotIronResult<D> = OPExecResult<DecisionMetadata<D, HotIronOxSer<D>>, ProtocolMessage<D, HotIronOxSer<D>>, D>;
+type HotIronPollResult<D> = OPPollResult<DecisionMetadata<D, HotIronOxSer<D>>, ProtocolMessage<D, HotIronOxSer<D>>, D>;
+
 impl<D, NT, CR> OrderingProtocol<D> for HotStuff<D, NT, CR> {
     type Serialization = HotIronOxSer<D>;
     type Config = ();
@@ -69,16 +71,16 @@ impl<D, NT, CR> OrderingProtocol<D> for HotStuff<D, NT, CR> {
         todo!()
     }
 
-    fn poll(&mut self) -> Result<OPPollResult<DecisionMetadata<D, Self::Serialization>, ProtocolMessage<D, Self::Serialization>, D>> {
+    fn poll(&mut self) -> Result<HotIronPollResult<D>> {
         todo!()
     }
 
-    fn process_message(&mut self, message: ShareableConsensusMessage<D, Self::Serialization>) -> Result<OPExecResult<DecisionMetadata<D, Self::Serialization>, ProtocolMessage<D, Self::Serialization>, D>> {
+    fn process_message(&mut self, message: ShareableConsensusMessage<D, Self::Serialization>)
+                       -> Result<HotIronResult<D>> {
         todo!()
     }
 
     fn install_seq_no(&mut self, seq_no: SeqNo) -> Result<()> {
         todo!()
     }
-
 }

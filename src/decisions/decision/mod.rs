@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use thiserror::Error;
 use atlas_common::crypto::hash::Digest;
-use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::ordering::{Orderable};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
+use atlas_common::quiet_unwrap;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::ShareableMessage;
@@ -11,7 +12,7 @@ use crate::crypto::{CryptoInformationProvider, get_partial_signature_for_message
 use crate::decisions::{DecisionHandler, DecisionNode};
 use crate::decisions::log::DecisionLog;
 use crate::decisions::msg_queue::HotStuffTBOQueue;
-use crate::messages::{HotIronOxMsg, HotStuffOrderProtocolMessage, QC};
+use crate::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType, QC, ProposalMessage, VoteMessage, VoteType};
 use crate::messages::serialize::HotIronOxSer;
 use crate::view::View;
 
@@ -19,7 +20,7 @@ pub enum DecisionState {
     Init,
     Prepare(usize),
     PreCommit(usize),
-    Commit,
+    Commit(usize),
     Decide,
 }
 
@@ -37,7 +38,7 @@ pub struct Decision<D> {
 pub enum DecisionPollResult<D> {
     TryPropose,
     Recv,
-    NextMessage(ShareableMessage<HotIronOxMsg<D>>),
+    NextMessage(ShareableMessage<HotFeOxMsg<D>>),
     Decided,
 }
 
@@ -46,33 +47,52 @@ pub enum DecisionResult<D> {
     DuplicateVote(NodeId),
     MessageIgnored,
     MessageQueued,
-    DecisionProgressed(ShareableMessage<HotIronOxMsg<D>>),
-    PrepareQC(QC<D>, ShareableMessage<HotIronOxMsg<D>>),
-    LockedQC(QC<D>, ShareableMessage<HotIronOxMsg<D>>),
-    Decided(ShareableMessage<HotIronOxMsg<D>>),
+    DecisionProgressed(ShareableMessage<HotFeOxMsg<D>>),
+    PrepareQC(QC<D>, ShareableMessage<HotFeOxMsg<D>>),
+    LockedQC(QC<D>, ShareableMessage<HotFeOxMsg<D>>),
+    Decided(ShareableMessage<HotFeOxMsg<D>>),
     DecidedIgnored,
 }
 
+
 impl<D> Decision<D> {
     /// Poll this decision
-    pub fn poll<NT>(&mut self, network: &Arc<NT>, dec_handler: &DecisionHandler<D>) -> DecisionPollResult<D> where NT: OrderProtocolSendNode<D, HotIronOxSer<D>> {
+    pub fn poll<NT, CR>(&mut self, network: &Arc<NT>, dec_handler: &DecisionHandler<D>, crypto_info: &CR) -> DecisionPollResult<D>
+        where
+            NT: OrderProtocolSendNode<D, HotIronOxSer<D>>,
+            CR: CryptoInformationProvider {
         match self.current_state {
             DecisionState::Init => {
                 //TODO: We need to include the prepare QC here
                 // Also, should the leader do this?
                 let view_leader = self.view.primary();
+                let seq = self.view.sequence_number();
 
-                network.send(HotIronOxMsg::message(self.view.sequence_number(), HotStuffOrderProtocolMessage::NewView(dec_handler.latest_qc())), view_leader, true);
+                atlas_common::threadpool::execute(move || {
+                    let vote_type = VoteType::NewView(dec_handler.latest_qc());
+
+                    let partial_sig = get_partial_signature_for_message(crypto_info, seq, &vote_type);
+
+                    quiet_unwrap!(network.send(HotFeOxMsg::new(seq, HotFeOxMsgType::Vote(VoteMessage::new(vote_type, partial_sig))), view_leader, true));
+                });
 
                 self.current_state = DecisionState::Prepare(0);
-            }
-            DecisionState::Prepare(_) => {}
-            DecisionState::PreCommit(_) => {}
-            DecisionState::Commit => {}
-            DecisionState::Decide => {}
-        }
 
-        todo!()
+                DecisionPollResult::Recv
+            }
+            DecisionState::Prepare(_) => {
+                todo!()
+            }
+            DecisionState::PreCommit(_) => {
+                todo!()
+            }
+            DecisionState::Commit => {
+                todo!()
+            }
+            DecisionState::Decide => {
+                todo!()
+            }
+        }
     }
 
     /// Are we the leader of the current view
@@ -80,27 +100,43 @@ impl<D> Decision<D> {
         self.view.primary() == self.node_id
     }
 
+    fn leader(&self) -> NodeId {
+        self.view.primary()
+    }
+
     /// Process a given consensus message
     pub fn process_message<NT, CR>(&mut self, network: Arc<NT>,
-                                   message: ShareableMessage<HotIronOxMsg<D>>,
+                                   message: ShareableMessage<HotFeOxMsg<D>>,
                                    dec_handler: &DecisionHandler<D>,
                                    crypto: &CR) -> Result<DecisionResult<D>>
-        where NT: OrderProtocolSendNode<D, HotIronOxSer<D>>, 
+        where NT: OrderProtocolSendNode<D, HotIronOxSer<D>>,
               CR: CryptoInformationProvider {
         return match &mut self.current_state {
             DecisionState::Init => unreachable!(),
             DecisionState::Prepare(received) if self.is_leader() => {
-                let (i, quorum_certificate) = match message.message().clone().into_kind() {
-                    HotStuffOrderProtocolMessage::NewView(qc) if self.view.sequence_number() != message.sequence_number() - 1 => {
-                        (*received + 1, qc)
+                let (i, quorum_certificate) = match message.message().clone().into() {
+                    HotFeOxMsgType::Vote(vote_msg)
+                    if self.view.sequence_number() == message.sequence_number() => {
+                        match vote_msg.into() {
+                            VoteType::NewView(qc) => {
+                                (received + 1, qc)
+                            }
+                            _ => {
+                                self.decision_queue.queue_message(message);
+
+                                return Ok(DecisionResult::MessageQueued);
+                            }
+                        }
                     }
-                    HotStuffOrderProtocolMessage::NewView(qc) => {
+                    HotFeOxMsgType::Proposal(prop_msg) => {
+                        // Leaders create the proposals, they never receive them, so
+                        // All proposal messages are dropped
                         return Ok(DecisionResult::MessageIgnored);
                     }
                     _ => {
-                        self.decision_queue.queue_message(message);
+                        // The received message does not match our sequence number
 
-                        return Ok(DecisionResult::MessageQueued);
+                        return Ok(DecisionResult::MessageIgnored);
                     }
                 };
 
@@ -113,7 +149,8 @@ impl<D> Decision<D> {
                 let digest = Digest::blank();
 
                 if *received >= self.view.quorum() {
-                    let qc = self.decision_log.populate_highest_prepare_QC(&self.view)?;
+                    let qc = self.decision_log.populate_highest_prepare_QC(&self.view)?
+                        .ok_or(DecisionError::NoQCAvailable)?;
 
                     let node = if let Some(qc) = qc {
                         DecisionNode::create_leaf(qc.decision_node(), digest, Vec::new())
@@ -121,32 +158,36 @@ impl<D> Decision<D> {
                         DecisionNode::create_root_leaf(&self.view, digest, Vec::new())
                     };
 
-                    let _ = network.broadcast(HotIronOxMsg::message(self.view.sequence_number(), HotStuffOrderProtocolMessage::Prepare(node, qc.cloned())), self.view.quorum_members().clone().into_iter());
+                    let msg = HotFeOxMsgType::Proposal(ProposalMessage::new(ProposalType::Prepare(node, qc.cloned())));
+
+                    let _ = network.broadcast(HotFeOxMsg::new(self.view.sequence_number(), msg), self.view.quorum_members().clone().into_iter());
 
                     self.current_state = DecisionState::PreCommit(0);
-
-                    Ok(DecisionResult::DecisionProgressed(message))
-                } else {
-                    Ok(DecisionResult::DecisionProgressed(message))
                 }
-            }
-            DecisionState::Prepare(received) => {
-                let (node, qc) = match message.message().clone().into_kind() {
-                    HotStuffOrderProtocolMessage::NewView(_) => {
-                        return Ok(DecisionResult::MessageIgnored);
-                    }
-                    HotStuffOrderProtocolMessage::Prepare(node, qc) if message.header().from() == self.view.primary() => {
-                        //TODO: Handle the first view, in which the previous highest QC is going to be null?
-                        (node, qc.ok_or(DecisionError::PrepareMessageWithEmptyQC)?)
-                    }
-                    HotStuffOrderProtocolMessage::Prepare(_, _) => {
-                        // Prepare messages from anyone other than the leader are ignored
-                        return Ok(DecisionResult::MessageIgnored);
-                    }
-                    _ => {
-                        self.decision_queue.queue_message(message);
 
-                        return Ok(DecisionResult::MessageQueued);
+                Ok(DecisionResult::DecisionProgressed(message))
+            }
+            DecisionState::Prepare(_) => {
+                let (node, qc) = match message.message().clone().into_kind() {
+                    HotFeOxMsgType::Proposal(proposal)
+                    if self.view.sequence_number() == message.message().sequence_number()
+                        && message.header().from() == self.leader() => {
+                        match proposal.into() {
+                            ProposalType::Prepare(node, qc) => {
+                                (node, qc)
+                            }
+                            _ => {
+                                self.decision_queue.queue_message(message);
+
+                                return Ok(DecisionResult::MessageQueued);
+                            }
+                        }
+                    }
+                    HotFeOxMsgType::Vote(_) | HotFeOxMsgType::Proposal(_) => {
+                        // A non leader can never receive vote messages, they can only receive
+                        // Proposals which they can vote on
+
+                        return Ok(DecisionResult::MessageIgnored);
                     }
                 };
 
@@ -154,11 +195,17 @@ impl<D> Decision<D> {
                     node.extends_from(qc.decision_node())
                 {
                     atlas_common::threadpool::execute(|| {
-                        let msg_signature = get_partial_signature_for_message(crypto, self.view.sequence_number(), Some(&node));
-                        
-                        let _  = network.send(HotIronOxMsg::message(self.view.sequence_number(), HotStuffOrderProtocolMessage::PrepareVote(node, msg_signature)), self.view.primary(), true);
+                        // Send the message signing processing to the threadpool
+
+                        let prepare_vote = VoteType::PrepareVote(node);
+
+                        let msg_signature = get_partial_signature_for_message(crypto, self.view.sequence_number(), &prepare_vote);
+
+                        let vote_msg = HotFeOxMsgType::Vote(VoteMessage::new(prepare_vote, msg_signature));
+
+                        let _ = network.send(HotFeOxMsg::new(self.view.sequence_number(), vote_msg), self.view.primary(), true);
                     });
-                    
+
                     self.current_state = DecisionState::PreCommit(0);
 
                     Ok(DecisionResult::DecisionProgressed(message))
@@ -167,20 +214,25 @@ impl<D> Decision<D> {
                 }
             }
             DecisionState::PreCommit(received) if self.is_leader() => {
-                let (node, signature) = match message.message().clone().into_kind() {
-                    HotStuffOrderProtocolMessage::NewView(_) => {
-                        return Ok(DecisionResult::MessageIgnored);
+                let (node, signature) = match message.message().message() {
+                    HotFeOxMsgType::Vote(vote_msg) if message.message().sequence_number() == self.view.sequence_number() => {
+                        match vote_msg.vote_type() {
+                            VoteType::PrepareVote(vote) => {
+                                vote_msg.clone().into_inner()
+                            }
+                            _ => {
+                                self.decision_queue.queue_message(message);
+
+                                return Ok(DecisionResult::MessageQueued);
+                            }
+                        }
                     }
-                    HotStuffOrderProtocolMessage::Prepare(_, _) => {
+                    HotFeOxMsgType::Proposal(_) => {
+                        // Leaders do not receive proposals
                         return Ok(DecisionResult::MessageIgnored);
-                    }
-                    HotStuffOrderProtocolMessage::PrepareVote(node, partial_sig) => {
-                        (node, partial_sig)
                     }
                     _ => {
-                        self.decision_queue.queue_message(message);
-
-                        return Ok(DecisionResult::MessageQueued);
+                        return Ok(DecisionResult::MessageIgnored);
                     }
                 };
 
@@ -189,28 +241,49 @@ impl<D> Decision<D> {
                 self.decision_log.queue_prepare_vote(&self.view, &node, signature);
 
                 if *received >= self.view.quorum() {
-                    let result = self.decision_log.make_prepare_certificate(&self.view)?;
+                    let created_qc = self.decision_log.make_prepare_certificate(&self.view)?;
 
-                    network.broadcast(HotIronOxMsg::message(self.view.sequence_number(), HotStuffOrderProtocolMessage::PreCommit(result.clone())), self.view.quorum_members().clone().into_iter());
+                    let view_seq = self.view.sequence_number();
+
+                    atlas_common::threadpool::execute(move || {
+                        let prop = ProposalType::PreCommit(created_qc.clone());
+
+                        let msg = HotFeOxMsg::new(view_seq, HotFeOxMsgType::Proposal(prop));
+
+                        let _ = network.broadcast(msg, self.view.quorum_members().clone().into_iter());
+                    });
 
                     self.current_state = DecisionState::Commit;
 
-                    Ok(DecisionResult::PrepareQC(result, message))
+                    Ok(DecisionResult::PrepareQC(created_qc, message))
                 } else {
                     Ok(DecisionResult::DecisionProgressed(message))
                 }
             }
             DecisionState::PreCommit(_) => {
-                let qc = match message.message().clone().into_kind() {
-                    HotStuffOrderProtocolMessage::NewView(_) | HotStuffOrderProtocolMessage::Prepare(_, _) | HotStuffOrderProtocolMessage::PrepareVote(_, _) =>
-                        return Ok(DecisionResult::MessageIgnored),
-                    HotStuffOrderProtocolMessage::PreCommit(qc) => qc,
-                    _ => {
-                        self.decision_queue.queue_message(message);
-
-                        return Ok(DecisionResult::MessageQueued);
+                let qc = match message.message().message() {
+                    HotFeOxMsgType::Proposal(prop)
+                    if message.message().sequence_number() == self.view.sequence_number()
+                        && message.header().from() == self.leader() => {
+                        match prop.proposal_type() {
+                            ProposalType::PreCommit(pre_commit) => {
+                                pre_commit.clone()
+                            }
+                            ProposalType::Prepare(_, _) => {
+                                return Ok(DecisionResult::MessageIgnored);
+                            }
+                            ProposalType::Commit(_) | ProposalType::Decide(_) => {
+                                self.decision_queue.queue_message(message);
+                                
+                                return Ok(DecisionResult::MessageQueued);
+                            }
+                        }
+                        
                     }
+                    _ => return Ok(DecisionResult::MessageIgnored)
                 };
+
+                self.decision_log.
 
                 self.current_state = DecisionState::Commit;
 
@@ -244,5 +317,7 @@ impl<D> Decision<D> {
 #[derive(Error, Debug)]
 pub enum DecisionError {
     #[error("Received a prepare message with an invalid qc")]
-    PrepareMessageWithEmptyQC
+    PrepareMessageWithEmptyQC,
+    #[error("No QC was available to create the decision")]
+    NoQCAvailable,
 }

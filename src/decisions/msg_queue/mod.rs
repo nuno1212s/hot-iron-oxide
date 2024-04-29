@@ -1,8 +1,6 @@
 use std::collections::VecDeque;
-use atlas_common::ordering::tbo_queue_message;
-use atlas_core::smr::smr_decision_log::ShareableMessage;
-use crate::messages::{HotIronOxMsg, HotStuffOrderProtocolMessage};
-
+use atlas_core::ordering_protocol::ShareableMessage;
+use crate::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType, VoteType};
 
 macro_rules! extract_msg {
     ($g:expr, $q:expr) => {
@@ -22,32 +20,46 @@ macro_rules! extract_msg {
 
 pub struct HotStuffTBOQueue<D> {
     get_queue: bool,
-    new_view: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
-    prepare: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
-    pre_commit: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
-    commit: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
-    decide: VecDeque<ShareableMessage<HotIronOxMsg<D>>>,
+    new_view: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    prepare: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    pre_commit: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    commit: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    decide: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
 }
 
 impl<D> HotStuffTBOQueue<D> {
-    pub fn queue_message(&mut self, message: ShareableMessage<HotIronOxMsg<D>>) {
+    pub fn queue_message(&mut self, message: ShareableMessage<HotFeOxMsg<D>>) {
         self.get_queue = true;
 
-        match message.message().kind() {
-            HotStuffOrderProtocolMessage::NewView(_) => {
-                self.new_view.push_back(message)
+        match message.message().message() {
+            HotFeOxMsgType::Proposal(prop) => {
+                match prop.proposal_type() {
+                    ProposalType::Prepare(_) => {
+                        self.prepare.push_back(message);
+                    }
+                    ProposalType::PreCommit => {
+                        self.pre_commit.push_back(message);
+                    }
+                    ProposalType::Commit => {
+                        self.commit.push_back(message);
+                    }
+                    ProposalType::Decide => {
+                        self.decide.push_back(message);
+                    }
+                }
             }
-            HotStuffOrderProtocolMessage::Prepare(_, _) => {
-                self.prepare.push_back(message)
-            }
-            HotStuffOrderProtocolMessage::PreCommit(_) => {
-                self.pre_commit.push_back(message)
-            }
-            HotStuffOrderProtocolMessage::Commit(_) => {
-                self.commit.push_back(message)
-            }
-            HotStuffOrderProtocolMessage::Decide(_) => {
-                self.decide.push_back(message)
+            HotFeOxMsgType::Vote(vote) => {
+                match vote.vote_type() {
+                    VoteType::PrepareVote => {
+                        self.prepare.push_back(message);
+                    }
+                    VoteType::PreCommitVote => {
+                        self.pre_commit.push_back(message);
+                    }
+                    VoteType::CommitVote => {
+                        self.commit.push_back(message);
+                    }
+                }
             }
         }
     }
