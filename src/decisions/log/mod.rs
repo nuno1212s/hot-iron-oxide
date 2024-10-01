@@ -1,44 +1,19 @@
+use getset::Getters;
 use thiserror::Error;
 
 use atlas_common::crypto::threshold_crypto::PartialSignature;
-use atlas_common::Err;
-use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::ordering::SeqNo;
 
 use crate::crypto::{combine_partial_signatures, CryptoInformationProvider};
 use crate::decisions::{DecisionNode, QCType};
-use crate::messages::{QC, VoteMessage, VoteType};
-use crate::view::View;
+use crate::messages::{ProposalMessage, ProposalType, QC, VoteMessage, VoteType};
 
-pub enum PrepareLog<D> {
-    Leader {
-        received_prepare_certificate: Vec<QC<D>>,
-        highest_prepare_certificate: Option<QC<D>>,
-    },
-    Replica,
+/// The log of votes for a given decision instance
+pub enum DecisionLog<D> {
+    Leader(LeaderDecisionLog<D>),
+    Replica(ReplicaDecisionLog<D>),
 }
 
-pub enum PreCommitLog<D> {
-    Leader {
-        decision_node: Option<DecisionNode<D>>,
-        received_precommit_votes: Vec<PartialSignature>,
-    },
-    Replica,
-}
-
-pub enum CommitLog<D> {
-    Leader {
-        decision_node: Option<DecisionNode<D>>,
-        received_commit_votes: Vec<PartialSignature>,
-    },
-    Replica,
-}
-
-/// Decision log
-pub struct DecisionLog<D> {
-    prepare_log: PrepareLog<D>,
-    pre_commit_log: PreCommitLog<D>,
-    commit_log: CommitLog<D>,
-}
 
 pub struct VoteStore<D> {
     vote_type: QCType,
@@ -47,20 +22,39 @@ pub struct VoteStore<D> {
 }
 
 pub struct NewViewStore<D> {
-    prepare_qcs: Vec<QC<D>>
+    prepare_qcs: Vec<QC<D>>,
 }
 
 pub struct LeaderDecisionLog<D> {
     current_proposal: Option<DecisionNode<D>>,
-    high_qc: VoteStore<D>,
+    high_qc: NewViewStore<D>,
     prepare_qc: VoteStore<D>,
     pre_commit_qc: VoteStore<D>,
     commit_qc: VoteStore<D>,
 }
 
+#[derive(Getters)]
 pub struct ReplicaDecisionLog<D> {
+    #[get = "pub(super)"]
     prepare_qc: Option<QC<D>>,
+    #[get = "pub(super)"]
     locked_qc: Option<QC<D>>,
+}
+
+impl<D> DecisionLog<D> {
+    pub fn as_replica(&self) -> Option<&ReplicaDecisionLog<D>> {
+        match self {
+            DecisionLog::Replica(replica) => Some(replica),
+            _ => None
+        }
+    }
+
+    pub fn as_leader(&self) -> Option<&LeaderDecisionLog<D>> {
+        match self {
+            DecisionLog::Leader(leader) => Some(leader),
+            _ => None
+        }
+    }
 }
 
 impl<D> VoteStore<D> {
@@ -88,77 +82,61 @@ impl<D> VoteStore<D> {
 }
 
 impl<D> LeaderDecisionLog<D> {
-    
-    pub(super) fn accept_vote(&mut self, vote: VoteMessage<D>) {
+    pub(super) fn accept_vote(&mut self, vote: VoteMessage<D>) -> Result<(), VoteAcceptError> {
         let (vote, signature) = vote.into_inner();
 
         match vote {
-            VoteType::NewView(_) => {}
-            VoteType::PrepareVote(_) => {}
-            VoteType::PreCommitVote(_) => {}
-            VoteType::CommitVote(_) => {}
+            VoteType::NewView(_) => {
+                Err(VoteAcceptError::NewViewVoteNotAcceptable)
+            }
+            VoteType::PrepareVote(vote) => {
+                Ok(self.prepare_qc.accept_vote(vote, signature))
+            }
+            VoteType::PreCommitVote(vote) => {
+                Ok(self.pre_commit_qc.accept_vote(vote, signature))
+            }
+            VoteType::CommitVote(commit_vote) => {
+                Ok(self.commit_qc.accept_vote(commit_vote, signature))
+            }
         }
-        
     }
-    
+
+    pub(super) fn generate_qc<CR>(&mut self, crypto_info: CR, view: SeqNo, qc_type: QCType) -> Result<QC<D>, VoteStoreError>
+        where CR: CryptoInformationProvider {
+        match qc_type {
+            QCType::PrepareVote => {
+                self.prepare_qc.generate_qc(crypto_info, view)
+            }
+            QCType::PreCommitVote => {
+                self.pre_commit_qc.generate_qc(crypto_info, view)
+            }
+            QCType::CommitVote => {
+                self.commit_qc.generate_qc(crypto_info, view)
+            }
+        }
+    }
 }
 
-impl<D> DecisionLog<D> {
-    #[allow(non_snake_case)]
-    pub fn handle_new_view_prepare_QC_received(&mut self, view: &View, message: QC<D>) {
-        match &mut self.prepare_log {
-            PrepareLog::Leader { received_prepare_certificate, .. } => {
-                received_prepare_certificate.push(message);
+impl<D> ReplicaDecisionLog<D> {
+    pub(super) fn accept_proposal(&mut self, proposal: ProposalMessage<D>) -> Result<(), ProposalAcceptError> {
+        match proposal.into() {
+            ProposalType::Prepare(_, _) => {
+                Err(ProposalAcceptError::PrepareProposalNotAcceptable)
             }
-            PrepareLog::Replica { .. } => {}
-        }
-    }
+            ProposalType::PreCommit(qc) => {
+                self.prepare_qc = Some(qc);
 
-    #[allow(non_snake_case)]
-    pub fn populate_highest_prepare_QC(&mut self, view: &View) -> Result<Option<&QC<D>>> {
-        match &mut self.prepare_log {
-            PrepareLog::Leader { received_prepare_certificate, highest_prepare_certificate } => {
-                if received_prepare_certificate.is_empty() {
-                    return Err!(DecisionError::PrepareCertificateEmpty);
-                } else {
-                    received_prepare_certificate.sort_by(|c1, c2| c1.sequence_number().cmp(&c2.sequence_number()));
-
-                    Ok(Some(received_prepare_certificate.last().unwrap()))
-                }
+                Ok(())
             }
-            PrepareLog::Replica { .. } => {
-                Ok(None)
+            ProposalType::Commit(locked_qc) => {
+                self.locked_qc = Some(locked_qc);
+
+                Ok(())
+            }
+            ProposalType::Decide(decided_qc) => {
+                Ok(())
             }
         }
-    }
-
-    pub fn queue_prepare_vote(&mut self, view: &View, node: &DecisionNode<D>, prepare_certificate: PartialSignature) {
-        match &mut self.pre_commit_log {
-            PreCommitLog::Leader { received_precommit_votes, decision_node } => {
-                if let Some(current_node) = decision_node {
-                    if current_node != *node {
-                        return;
-                    }
-                } else {
-                    *decision_node = Some(node.clone());
-                }
-
-                received_precommit_votes.push(prepare_certificate);
-            }
-            PreCommitLog::Replica => {}
-        }
-    }
-
-    pub fn make_prepare_certificate(&mut self, view: &View) -> Result<QC<D>> {
-        match &self.pre_commit_log {
-            PreCommitLog::Leader {
-                decision_node,
-                received_precommit_votes
-            } => {}
-            PreCommitLog::Replica => {}
-        }
-
-        todo!()
     }
 }
 
@@ -174,4 +152,16 @@ pub enum VoteStoreError {
     NoDecisionNode,
     #[error("Failed to create combined signature")]
     FailedToCreateCombinedSignature,
+}
+
+#[derive(Error, Debug)]
+pub enum VoteAcceptError {
+    #[error("Cannot accept new view vote in the log.")]
+    NewViewVoteNotAcceptable,
+}
+
+#[derive(Error, Debug)]
+pub enum ProposalAcceptError {
+    #[error("Cannot accept prepare proposal")]
+    PrepareProposalNotAcceptable
 }

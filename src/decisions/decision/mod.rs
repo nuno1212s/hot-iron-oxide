@@ -80,19 +80,27 @@ impl<D> Decision<D> {
 
                 DecisionPollResult::Recv
             }
+            DecisionState::Prepare(_) if self.decision_queue.should_poll() => {
+                todo!()
+            }
             DecisionState::Prepare(_) => {
                 todo!()
             }
             DecisionState::PreCommit(_) => {
                 todo!()
             }
-            DecisionState::Commit => {
+            DecisionState::Commit(_) => {
                 todo!()
             }
             DecisionState::Decide => {
                 todo!()
             }
         }
+    }
+
+    /// Queue a message into this decision, so it can be polled later
+    pub(super) fn queue(&mut self, message: ShareableMessage<HotFeOxMsg<D>>) {
+        self.decision_queue.queue_message(message)
     }
 
     /// Are we the leader of the current view
@@ -102,6 +110,10 @@ impl<D> Decision<D> {
 
     fn leader(&self) -> NodeId {
         self.view.primary()
+    }
+    
+    pub(super) fn can_be_finalized(&self) -> bool {
+        todo!()
     }
 
     /// Process a given consensus message
@@ -195,8 +207,7 @@ impl<D> Decision<D> {
                     node.extends_from(qc.decision_node())
                 {
                     atlas_common::threadpool::execute(|| {
-                        // Send the message signing processing to the threadpool
-
+                        // Send the message signing processing to the threadpool 
                         let prepare_vote = VoteType::PrepareVote(node);
 
                         let msg_signature = get_partial_signature_for_message(crypto, self.view.sequence_number(), &prepare_vote);
@@ -274,16 +285,14 @@ impl<D> Decision<D> {
                             }
                             ProposalType::Commit(_) | ProposalType::Decide(_) => {
                                 self.decision_queue.queue_message(message);
-                                
+
                                 return Ok(DecisionResult::MessageQueued);
                             }
                         }
-                        
                     }
                     _ => return Ok(DecisionResult::MessageIgnored)
                 };
 
-                self.decision_log.
 
                 self.current_state = DecisionState::Commit;
 
@@ -291,22 +300,11 @@ impl<D> Decision<D> {
             }
             DecisionState::Commit if self.is_leader() => {}
             DecisionState::Commit => {
-                let signature = match message.message().clone().into_kind() {
-                    HotStuffOrderProtocolMessage::NewView(_) |
-                    HotStuffOrderProtocolMessage::Prepare(_, _) |
-                    HotStuffOrderProtocolMessage::PrepareVote(_, _) |
-                    HotStuffOrderProtocolMessage::PreCommit(_) =>
-                        return Ok(DecisionResult::MessageIgnored),
-                    HotStuffOrderProtocolMessage::Commit(sig) => sig,
-                    _ => {
-                        self.decision_queue.queue_message(message);
-
-                        return Ok(DecisionResult::MessageQueued);
-                    }
-                };
+                
 
                 self.current_state = DecisionState::Decide;
-
+                
+                todo!();
                 //Ok(DecisionResult::LockedQC(signature, message))
             }
             DecisionState::Decide => {}

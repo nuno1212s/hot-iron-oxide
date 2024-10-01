@@ -9,6 +9,7 @@ use crate::view::View;
 mod decision;
 mod msg_queue;
 mod log;
+mod hotstuff;
 
 /// The decision node header
 #[derive(PartialEq, Eq, Clone)]

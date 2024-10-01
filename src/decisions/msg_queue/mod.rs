@@ -20,11 +20,11 @@ macro_rules! extract_msg {
 
 pub struct HotStuffTBOQueue<D> {
     get_queue: bool,
-    new_view: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
-    prepare: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
-    pre_commit: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
-    commit: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
-    decide: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    pub new_view: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    pub prepare: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    pub pre_commit: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    pub commit: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
+    pub decide: VecDeque<ShareableMessage<HotFeOxMsg<D>>>,
 }
 
 impl<D> HotStuffTBOQueue<D> {

@@ -3,7 +3,8 @@ use lazy_static::lazy_static;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_core::ordering_protocol::{DecisionMetadata, OPExecResult, OPExResult, OPPollResult, OrderingProtocol, OrderProtocolTolerance, ProtocolMessage, ShareableConsensusMessage};
+use atlas_core::ordering_protocol::{DecisionMetadata, OPExecResult, OPExResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, OrderProtocolTolerance, ProtocolMessage, ShareableConsensusMessage};
+use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use crate::crypto::QuorumInfo;
 use crate::messages::serialize::HotIronOxSer;
@@ -13,6 +14,7 @@ pub mod decisions;
 pub mod messages;
 pub mod view;
 mod crypto;
+mod request_provider;
 
 
 lazy_static!(
@@ -24,6 +26,7 @@ pub struct HotStuff<D, NT, CR> {
     current_view: View,
     network_node: Arc<NT>,
     quorum_information: CR,
+    
 }
 
 impl<D, NT, CR> OrderProtocolTolerance for HotStuff<D, NT, CR> {
@@ -81,6 +84,12 @@ impl<D, NT, CR> OrderingProtocol<D> for HotStuff<D, NT, CR> {
     }
 
     fn install_seq_no(&mut self, seq_no: SeqNo) -> Result<()> {
+        todo!()
+    }
+}
+
+impl<D, NT, RQ, CR> NetworkedOrderProtocolInitializer<D, RQ, NT> for HotStuff<D, NT, CR> {
+    fn initialize(config: Self::Config, ordering_protocol_args: OrderingProtocolArgs<D, RQ, NT>) -> Result<Self> where Self: Sized {
         todo!()
     }
 }
