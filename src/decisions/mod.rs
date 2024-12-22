@@ -1,18 +1,25 @@
+use std::hash::Hash;
 use std::sync::Arc;
+use std::marker::PhantomData;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::messages::StoredRequestMessage;
-use crate::messages::QC;
+#[cfg(feature = "serialize_serde")]
+use serde::{Deserialize, Serialize};
+use atlas_common::serialization_helper::SerType;
 use crate::view::View;
 
 mod decision;
 mod msg_queue;
 mod log;
 mod hotstuff;
+mod req_aggr;
 
 /// The decision node header
-#[derive(PartialEq, Eq, Clone)]
+
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(PartialEq, Eq, Clone, Hash)]
 pub struct DecisionNodeHeader {
     view_no: SeqNo,
     previous_block: Option<Digest>,
@@ -20,34 +27,39 @@ pub struct DecisionNodeHeader {
     contained_client_commands: usize
 }
 
-/// The decision node
-#[derive(PartialEq, Eq, Clone)]
+/// The decision nod
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct DecisionNode<D> {
     decision_header: DecisionNodeHeader,
-    client_commands: Arc<[StoredRequestMessage<D>]>,
+    client_commands: DecNode<D>,
 }
 
+
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum DecNode<D> {
     FullNode {
-        decision_header: DecisionNodeHeader,
         client_commands: Arc<[StoredRequestMessage<D>]>,
     },
-    ShortNode {
-        decision_header: DecisionNodeHeader,
-    },
+    ShortNode
 }
 
 pub struct DecisionTree {}
 
-pub struct DecisionHandler<D> {}
+pub struct DecisionHandler<D>(PhantomData<fn() -> D>);
 
-impl<D> DecisionHandler<D> {
+impl<D> DecisionHandler<D> where D: SerType {
     fn safe_node(&self, node: &DecisionNode<D>, qc: &QC<D>) -> bool {
         todo!("Implement this according to our tree")
     }
 
     fn latest_qc(&self) -> Option<QC<D>> {
         todo!("Implement this according to our tree")
+    }
+}
+
+impl<D> Default for DecisionHandler<D> {
+    fn default() -> Self {
+        Self (Default::default())
     }
 }
 
@@ -84,17 +96,24 @@ impl<D> Orderable for DecisionNode<D> {
 }
 
 impl<D> DecisionNode<D> {
-    fn create_leaf(previous_node: &DecisionNode<D>, digest: Digest, client_commands: Vec<StoredRequestMessage<D>>) -> Self {
+    pub fn create_leaf(previous_node: &DecisionNode<D>, digest: Digest, client_commands: Vec<StoredRequestMessage<D>>) -> Self {
         Self {
             decision_header: DecisionNodeHeader::initialize_header_from_previous(digest, &previous_node.decision_header, client_commands.len()),
-            client_commands: Arc::from(client_commands),
+            client_commands: Arc::<[StoredRequestMessage<D>]>::from(client_commands).into(),
         }
     }
 
-    fn create_root_leaf(view: &View, digest: Digest, client_commands: Vec<StoredRequestMessage<D>>) -> Self {
+    pub fn create_root_leaf(view: &View, digest: Digest, client_commands: Vec<StoredRequestMessage<D>>) -> Self {
         Self {
             decision_header: DecisionNodeHeader::initialize_root_node(view, digest, client_commands.len()),
-            client_commands: Arc::from(client_commands),
+            client_commands: Arc::<[StoredRequestMessage<D>]>::from(client_commands).into(),
+        }
+    }
+
+    pub fn create_short_node(previous_node: &DecisionNode<D>, digest: Digest, contained_commands: usize) -> Self {
+        Self {
+            decision_header: DecisionNodeHeader::initialize_header_from_previous(digest, &previous_node.decision_header, contained_commands),
+            client_commands: DecNode::ShortNode,
         }
     }
 
@@ -149,6 +168,46 @@ impl<D> QC<D> {
     }
     pub fn decision_node(&self) -> &DecisionNode<D> {
         &self.decision_node
+    }
+}
+
+impl<D> PartialEq for DecisionNode<D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.decision_header == other.decision_header
+    }
+}
+
+impl<D> Eq for DecisionNode<D> {}
+
+impl<D> Hash for DecisionNode<D> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.decision_header.hash(state);
+    }
+}
+
+impl<D> Clone for DecisionNode<D> {
+    fn clone(&self) -> Self {
+        Self {
+            decision_header: self.decision_header.clone(),
+            client_commands: self.client_commands.clone(),
+        }
+    }
+}
+
+impl<D> Clone for DecNode<D> {
+    fn clone(&self) -> Self {
+        match self {
+            DecNode::FullNode { client_commands } => DecNode::FullNode {
+                client_commands: client_commands.clone(),
+            },
+            DecNode::ShortNode => DecNode::ShortNode,
+        }
+    }
+}
+
+impl<D> From<Arc<[StoredRequestMessage<D>]>> for DecNode<D> {
+    fn from(value: Arc<[StoredRequestMessage<D>]>) -> Self {
+        DecNode::FullNode { client_commands: value }
     }
 }
 

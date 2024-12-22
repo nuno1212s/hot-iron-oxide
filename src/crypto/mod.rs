@@ -15,7 +15,7 @@ pub struct QuorumInfo {
     pub_key: PublicKeySet,
 }
 
-pub trait CryptoInformationProvider: Sync {
+pub trait CryptoInformationProvider: Sync + Send + 'static {
     
     fn get_own_private_key(&self) -> &PrivateKeyPart;
 

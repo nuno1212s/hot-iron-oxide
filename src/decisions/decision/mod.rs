@@ -1,18 +1,21 @@
 use std::sync::Arc;
 use thiserror::Error;
+use tracing::error;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::ordering::{Orderable};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::quiet_unwrap;
+use atlas_common::serialization_helper::SerType;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::ShareableMessage;
 use crate::crypto::{CryptoInformationProvider, get_partial_signature_for_message};
-use crate::decisions::{DecisionHandler, DecisionNode};
+use crate::decisions::{DecisionHandler, DecisionNode, QCType, QC};
 use crate::decisions::log::DecisionLog;
 use crate::decisions::msg_queue::HotStuffTBOQueue;
-use crate::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType, QC, ProposalMessage, VoteMessage, VoteType};
+use crate::decisions::req_aggr::RequestAggr;
+use crate::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType, ProposalMessage, VoteMessage, VoteType};
 use crate::messages::serialize::HotIronOxSer;
 use crate::view::View;
 
@@ -55,25 +58,32 @@ pub enum DecisionResult<D> {
 }
 
 
-impl<D> Decision<D> {
+impl<RQ> Decision<RQ> 
+where RQ: SerType {
     /// Poll this decision
-    pub fn poll<NT, CR>(&mut self, network: &Arc<NT>, dec_handler: &DecisionHandler<D>, crypto_info: &CR) -> DecisionPollResult<D>
+    pub fn poll<NT, CR>(&mut self, network: &Arc<NT>, dec_handler: &DecisionHandler<RQ>, crypto_info: &Arc<CR>) -> DecisionPollResult<RQ>
         where
-            NT: OrderProtocolSendNode<D, HotIronOxSer<D>>,
+            NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
             CR: CryptoInformationProvider {
         match self.current_state {
             DecisionState::Init => {
                 //TODO: We need to include the prepare QC here
                 // Also, should the leader do this?
-                let view_leader = self.view.primary();
-                let seq = self.view.sequence_number();
 
-                atlas_common::threadpool::execute(move || {
-                    let vote_type = VoteType::NewView(dec_handler.latest_qc());
+                atlas_common::threadpool::execute({
+                    let network = network.clone();
+                    let crypto_info = crypto_info.clone();
+                    let latest_qc = dec_handler.latest_qc();
+                    let view_leader = self.view.primary();
+                    let seq = self.view.sequence_number();
+                    
+                    move || {
+                        let vote_type = VoteType::NewView(latest_qc);
 
-                    let partial_sig = get_partial_signature_for_message(crypto_info, seq, &vote_type);
+                        let partial_sig = get_partial_signature_for_message(&*crypto_info, seq, &vote_type);
 
-                    quiet_unwrap!(network.send(HotFeOxMsg::new(seq, HotFeOxMsgType::Vote(VoteMessage::new(vote_type, partial_sig))), view_leader, true));
+                        quiet_unwrap!(network.send(HotFeOxMsg::new(seq, HotFeOxMsgType::Vote(VoteMessage::new(vote_type, partial_sig))), view_leader, true));
+                    }
                 });
 
                 self.current_state = DecisionState::Prepare(0);
@@ -99,7 +109,7 @@ impl<D> Decision<D> {
     }
 
     /// Queue a message into this decision, so it can be polled later
-    pub(super) fn queue(&mut self, message: ShareableMessage<HotFeOxMsg<D>>) {
+    pub(super) fn queue(&mut self, message: ShareableMessage<HotFeOxMsg<RQ>>) {
         self.decision_queue.queue_message(message)
     }
 
@@ -118,20 +128,23 @@ impl<D> Decision<D> {
 
     /// Process a given consensus message
     pub fn process_message<NT, CR>(&mut self, network: Arc<NT>,
-                                   message: ShareableMessage<HotFeOxMsg<D>>,
-                                   dec_handler: &DecisionHandler<D>,
-                                   crypto: &CR) -> Result<DecisionResult<D>>
-        where NT: OrderProtocolSendNode<D, HotIronOxSer<D>>,
+                                   message: ShareableMessage<HotFeOxMsg<RQ>>,
+                                   dec_handler: &DecisionHandler<RQ>,
+                                   crypto: &Arc<CR>,
+                                   req_aggr: &Arc<RequestAggr<RQ>>) -> Result<DecisionResult<RQ>>
+        where NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
               CR: CryptoInformationProvider {
-        return match &mut self.current_state {
+        let is_leader = self.is_leader();
+        
+        match &mut self.current_state {
             DecisionState::Init => unreachable!(),
-            DecisionState::Prepare(received) if self.is_leader() => {
-                let (i, quorum_certificate) = match message.message().clone().into() {
+            DecisionState::Prepare(received) if is_leader => {
+                let (i, qc, signature) = match message.message().clone().into() {
                     HotFeOxMsgType::Vote(vote_msg)
                     if self.view.sequence_number() == message.sequence_number() => {
-                        match vote_msg.into() {
-                            VoteType::NewView(qc) => {
-                                (received + 1, qc)
+                        match vote_msg.into_inner() {
+                            (VoteType::NewView(qc), signature) => {
+                                (*received + 1, qc, signature)
                             }
                             _ => {
                                 self.decision_queue.queue_message(message);
@@ -152,25 +165,26 @@ impl<D> Decision<D> {
                     }
                 };
 
+                let leader_log = self.decision_log.as_mut_leader().unwrap();
+                
                 *received = i;
 
-                if let Some(certificate) = quorum_certificate {
-                    self.decision_log.handle_new_view_prepare_QC_received(&self.view, certificate);
+                if let Some(qc) = qc {
+                    leader_log.new_view_store().accept_new_view(qc)?;;
                 }
-
+                
                 let digest = Digest::blank();
 
                 if *received >= self.view.quorum() {
-                    let qc = self.decision_log.populate_highest_prepare_QC(&self.view)?
-                        .ok_or(DecisionError::NoQCAvailable)?;
+                    let qc = leader_log.new_view_store().get_high_qc();
 
                     let node = if let Some(qc) = qc {
-                        DecisionNode::create_leaf(qc.decision_node(), digest, Vec::new())
+                        DecisionNode::create_leaf(qc.decision_node(), digest, req_aggr.take_pool_requests())
                     } else {
-                        DecisionNode::create_root_leaf(&self.view, digest, Vec::new())
+                        DecisionNode::create_root_leaf(&self.view, digest, req_aggr.take_pool_requests())
                     };
 
-                    let msg = HotFeOxMsgType::Proposal(ProposalMessage::new(ProposalType::Prepare(node, qc.cloned())));
+                    let msg = HotFeOxMsgType::Proposal(ProposalMessage::new(ProposalType::Prepare(node, qc.unwrap().clone())));
 
                     let _ = network.broadcast(HotFeOxMsg::new(self.view.sequence_number(), msg), self.view.quorum_members().clone().into_iter());
 
@@ -180,7 +194,7 @@ impl<D> Decision<D> {
                 Ok(DecisionResult::DecisionProgressed(message))
             }
             DecisionState::Prepare(_) => {
-                let (node, qc) = match message.message().clone().into_kind() {
+                let (node, qc) = match message.message().clone().into() {
                     HotFeOxMsgType::Proposal(proposal)
                     if self.view.sequence_number() == message.message().sequence_number()
                         && message.header().from() == self.leader() => {
@@ -206,15 +220,23 @@ impl<D> Decision<D> {
                 if dec_handler.safe_node(&node, &qc) &&
                     node.extends_from(qc.decision_node())
                 {
-                    atlas_common::threadpool::execute(|| {
-                        // Send the message signing processing to the threadpool 
-                        let prepare_vote = VoteType::PrepareVote(node);
+                    atlas_common::threadpool::execute({
+                        let network = network.clone();
+                        
+                        let crypto = crypto.clone();
+                        
+                        let view = self.view.clone();
+                        
+                        move || {
+                            // Send the message signing processing to the threadpool 
+                            let prepare_vote = VoteType::PrepareVote(node);
 
-                        let msg_signature = get_partial_signature_for_message(crypto, self.view.sequence_number(), &prepare_vote);
+                            let msg_signature = get_partial_signature_for_message(&*crypto, view.sequence_number(), &prepare_vote);
 
-                        let vote_msg = HotFeOxMsgType::Vote(VoteMessage::new(prepare_vote, msg_signature));
+                            let vote_msg = HotFeOxMsgType::Vote(VoteMessage::new(prepare_vote, msg_signature));
 
-                        let _ = network.send(HotFeOxMsg::new(self.view.sequence_number(), vote_msg), self.view.primary(), true);
+                            let _ = network.send(HotFeOxMsg::new(view.sequence_number(), vote_msg), view.primary(), true);
+                        }
                     });
 
                     self.current_state = DecisionState::PreCommit(0);
@@ -224,12 +246,12 @@ impl<D> Decision<D> {
                     Ok(DecisionResult::MessageIgnored)
                 }
             }
-            DecisionState::PreCommit(received) if self.is_leader() => {
-                let (node, signature) = match message.message().message() {
+            DecisionState::PreCommit(received) if is_leader => {
+                let vote_msg = match message.message().message() {
                     HotFeOxMsgType::Vote(vote_msg) if message.message().sequence_number() == self.view.sequence_number() => {
                         match vote_msg.vote_type() {
-                            VoteType::PrepareVote(vote) => {
-                                vote_msg.clone().into_inner()
+                            VoteType::PrepareVote(_) => {
+                                vote_msg.clone()
                             }
                             _ => {
                                 self.decision_queue.queue_message(message);
@@ -249,22 +271,31 @@ impl<D> Decision<D> {
 
                 *received += 1;
 
-                self.decision_log.queue_prepare_vote(&self.view, &node, signature);
+                let leader_log = self.decision_log.as_mut_leader().expect("Leader decision log not available");
+                
+                leader_log.accept_vote(vote_msg)?;
 
                 if *received >= self.view.quorum() {
-                    let created_qc = self.decision_log.make_prepare_certificate(&self.view)?;
+                    let created_qc = leader_log.generate_qc(&**crypto, self.view.sequence_number(), QCType::PrepareVote)?;
 
                     let view_seq = self.view.sequence_number();
 
-                    atlas_common::threadpool::execute(move || {
-                        let prop = ProposalType::PreCommit(created_qc.clone());
+                    atlas_common::threadpool::execute({
+                        let view_members = self.view.quorum_members().clone();
+                        let created_qc = created_qc.clone();
+                        
+                        move || {
+                            let prop = ProposalType::PreCommit(created_qc);
 
-                        let msg = HotFeOxMsg::new(view_seq, HotFeOxMsgType::Proposal(prop));
+                            let proposal_message = ProposalMessage::new(prop);
 
-                        let _ = network.broadcast(msg, self.view.quorum_members().clone().into_iter());
+                            let msg = HotFeOxMsg::new(view_seq, HotFeOxMsgType::Proposal(proposal_message));
+
+                            let _ = network.broadcast(msg, view_members.into_iter());
+                        }
                     });
 
-                    self.current_state = DecisionState::Commit;
+                    self.current_state = DecisionState::Commit(0);
 
                     Ok(DecisionResult::PrepareQC(created_qc, message))
                 } else {
@@ -294,21 +325,23 @@ impl<D> Decision<D> {
                 };
 
 
-                self.current_state = DecisionState::Commit;
+                self.current_state = DecisionState::Commit(0);
 
                 Ok(DecisionResult::PrepareQC(qc, message))
             }
-            DecisionState::Commit if self.is_leader() => {}
-            DecisionState::Commit => {
-                
-
+            DecisionState::Commit(_) if is_leader => {
+                todo!()
+            }
+            DecisionState::Commit(_) => {
                 self.current_state = DecisionState::Decide;
                 
                 todo!();
                 //Ok(DecisionResult::LockedQC(signature, message))
             }
-            DecisionState::Decide => {}
-        };
+            DecisionState::Decide => {
+                todo!()
+            }
+        }
     }
 }
 

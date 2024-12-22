@@ -1,5 +1,8 @@
 pub mod serialize;
 
+use std::fmt::Debug;
+#[cfg(feature = "serialize_serde")]
+use serde::{Serialize, Deserialize};
 use getset::Getters;
 use atlas_common::crypto::threshold_crypto::{PartialSignature, CombinedSignature};
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -116,4 +119,8 @@ impl<D> From<VoteMessage<D>> for DecisionNode<D> {
             }
         }
     }
+}
+
+impl<D> Debug for HotFeOxMsg<D> {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> { todo!() }
 }

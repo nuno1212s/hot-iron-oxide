@@ -2,17 +2,22 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use either::Either;
+use thiserror::Error;
 use tracing::{debug, instrument};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use atlas_common::serialization_helper::SerType;
+use atlas_core::messages::RequestMessage;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::ShareableMessage;
+use atlas_core::request_pre_processing::{BatchOutput, RequestPreProcessing};
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_core::timeouts::TimeoutsHandle;
+use crate::crypto::CryptoInformationProvider;
 use crate::decisions::decision::{Decision, DecisionPollResult};
-use crate::decisions::DecisionNodeHeader;
+use crate::decisions::{DecisionHandler, DecisionNodeHeader};
+use crate::decisions::req_aggr::RequestAggr;
 use crate::messages::HotFeOxMsg;
 use crate::messages::serialize::HotIronOxSer;
 
@@ -26,19 +31,31 @@ pub struct Signals {
     signaled_seq_no: BinaryHeap<Reverse<SeqNo>>,
 }
 
-pub enum ConsensusPollStatus<O> {
+pub enum ConsensusPollStatus<RQ> {
     Recv,
-    NextMessage(ShareableMessage<HotFeOxMsg<O>>),
-    Decided(MaybeVec<atlas_core::ordering_protocol::Decision<DecisionNodeHeader, HotFeOxMsg<O>, O>>),
+    NextMessage(ShareableMessage<HotFeOxMsg<RQ>>),
+    Decided(MaybeVec<atlas_core::ordering_protocol::Decision<DecisionNodeHeader, HotFeOxMsg<RQ>, RQ>>),
+}
+
+pub enum ConsensusStatus<RQ> {
+    MessageIgnored(),
+    //TODO
+    Decided(MaybeVec<atlas_core::ordering_protocol::Decision<DecisionNodeHeader, HotFeOxMsg<RQ>, RQ>>),
 }
 
 pub(crate) struct HotStuffProtocol<RQ, RP, NT>
-    where RQ: SerType,
-          NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> {
+where
+    RQ: SerType,
+    NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
+{
     /// The decision store
     decisions: VecDeque<Decision<RQ>>,
 
     request_pre_processor: RP,
+    
+    decision_handler: DecisionHandler<RQ>,
+    
+    request_aggr: Arc<RequestAggr<RQ>>,
 
     node: Arc<NT>,
 
@@ -50,11 +67,20 @@ pub(crate) struct HotStuffProtocol<RQ, RP, NT>
     timeouts: TimeoutModHandle,
 }
 
-impl<RQ, RP, NT> HotStuffProtocol<RQ, RP, NT> {
-    pub fn new(timeouts: TimeoutModHandle, node: Arc<NT>, request_pre_processor: RP) -> Result<Self, ()> {
+impl<RQ, RP, NT> HotStuffProtocol<RQ, RP, NT>
+where
+    RQ: SerType,
+    NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
+{
+    pub fn new(timeouts: TimeoutModHandle, node: Arc<NT>, request_pre_processor: RP, batch_output: BatchOutput<RequestMessage<RQ>>) -> Result<Self, ()> {
+        
+        let rq_aggr = RequestAggr::new(batch_output);
+        
         Ok(Self {
             decisions: Default::default(),
             request_pre_processor,
+            decision_handler: DecisionHandler::default(),
+            request_aggr: rq_aggr,
             node,
             current_seq_no: SeqNo::ZERO,
             signal_queue: Default::default(),
@@ -69,7 +95,7 @@ impl<RQ, RP, NT> HotStuffProtocol<RQ, RP, NT> {
     fn index(&self, seq_no: &SeqNo) -> Either<InvalidSeqNo, usize> {
         seq_no.index(self.current_seq_no)
     }
-    
+
     pub fn can_finalize(&self) -> bool {
         self.decisions
             .front()
@@ -77,7 +103,7 @@ impl<RQ, RP, NT> HotStuffProtocol<RQ, RP, NT> {
             .unwrap_or(false)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub fn queue(&mut self, message: ShareableMessage<HotFeOxMsg<RQ>>) {
         let message_seq = message.message().sequence_number();
 
@@ -106,48 +132,46 @@ impl<RQ, RP, NT> HotStuffProtocol<RQ, RP, NT> {
         }
     }
 
-    #[instrument]
-    pub fn poll(&mut self) -> ConsensusPollStatus<RQ> {
+    #[instrument(skip_all)]
+    pub fn poll<CR>(&mut self, crypto: &Arc<CR>) -> ConsensusPollStatus<RQ> 
+    where CR: CryptoInformationProvider {
         while let Some(seq) = self.signal_queue.pop_signalled() {
             match seq.index(self.current_seq_no) {
                 Either::Right(index) => {
-                    let poll_result = self.decisions[index].poll(&self.node, ,);
+                    let poll_result = self.decisions[index].poll(&self.node, &self.decision_handler, crypto);
 
                     match poll_result {
                         DecisionPollResult::NextMessage(message) => {
                             self.signal_queue.push_signalled(seq);
-                            
+
                             return ConsensusPollStatus::NextMessage(message);
                         }
                         DecisionPollResult::TryPropose => {
                             self.signal_queue.push_signalled(seq);
-                            
+
                             todo!()
                         }
                         _ => {}
                     }
-                    
                 }
                 Either::Left(_) => {
                     debug!("Cannot possibly poll sequence number that is in the past {:?} vs {:?}",
                     seq, self.current_seq_no);
                 }
             }
-            
         }
-        
+
         while self.can_finalize() {
-            return ConsensusPollStatus::Decided(MaybeVec::None)
+            return ConsensusPollStatus::Decided(MaybeVec::None);
         }
-        
+
         ConsensusPollStatus::Recv
     }
-    
-    #[instrument]
-    pub fn process_message<NT>(&mut self) -> Result<ConsensusStatus<RQ>> {
-        
+
+    #[instrument(skip_all)]
+    pub fn process_message(&mut self) -> Result<ConsensusStatus<RQ>, ProcessMessageErr> {
+        todo!()
     }
-    
 }
 
 
@@ -181,4 +205,9 @@ impl Signals {
         self.signaled_nos.clear();
         self.signaled_seq_no.clear();
     }
+}
+
+#[derive(Error, Debug)]
+pub enum ProcessMessageErr {
+    
 }

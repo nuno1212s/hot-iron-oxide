@@ -25,7 +25,7 @@ impl NetworkView for View {
     }
 
     fn quorum(&self) -> usize {
-        HotStuff::get_quorum_for_n(self.members.len())
+        crate::get_quorum_for_n(self.members.len())
     }
 
     fn quorum_members(&self) -> &Vec<NodeId> {

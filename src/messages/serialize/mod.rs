@@ -1,3 +1,4 @@
+use atlas_common::serialization_helper::SerType;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use atlas_communication::message::Header;
@@ -6,15 +7,16 @@ use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessa
 use crate::decisions::DecisionNodeHeader;
 use crate::messages::HotFeOxMsg;
 
-pub struct HotIronOxSer<D>(PhantomData<(D)>);
+pub struct HotIronOxSer<RQ>(PhantomData<fn() -> (RQ)>);
 
-impl <D> OrderingProtocolMessage<D> for HotIronOxSer<D> {
-    type ProtocolMessage = HotFeOxMsg<D>;
+impl <RQ> OrderingProtocolMessage<RQ> for HotIronOxSer<RQ> 
+where RQ: SerType {
+    type ProtocolMessage = HotFeOxMsg<RQ>;
     type ProofMetadata = DecisionNodeHeader;
 
     fn internally_verify_message<NI, OPVH>(network_info: &Arc<NI>, header: &Header, message: &Self::ProtocolMessage) -> atlas_common::error::Result<()>
         where NI: NetworkInformationProvider,
-              OPVH: OrderProtocolVerificationHelper<D, Self, NI>,
+              OPVH: OrderProtocolVerificationHelper<RQ, Self, NI>,
               Self: Sized {
         todo!()
     }

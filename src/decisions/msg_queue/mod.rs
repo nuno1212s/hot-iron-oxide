@@ -34,30 +34,33 @@ impl<D> HotStuffTBOQueue<D> {
         match message.message().message() {
             HotFeOxMsgType::Proposal(prop) => {
                 match prop.proposal_type() {
-                    ProposalType::Prepare(_) => {
+                    ProposalType::Prepare(_, _) => {
                         self.prepare.push_back(message);
                     }
-                    ProposalType::PreCommit => {
+                    ProposalType::PreCommit(_) => {
                         self.pre_commit.push_back(message);
                     }
-                    ProposalType::Commit => {
+                    ProposalType::Commit(_) => {
                         self.commit.push_back(message);
                     }
-                    ProposalType::Decide => {
+                    ProposalType::Decide(_) => {
                         self.decide.push_back(message);
                     }
                 }
             }
             HotFeOxMsgType::Vote(vote) => {
                 match vote.vote_type() {
-                    VoteType::PrepareVote => {
+                    VoteType::PrepareVote(_) => {
                         self.prepare.push_back(message);
                     }
-                    VoteType::PreCommitVote => {
+                    VoteType::PreCommitVote(_) => {
                         self.pre_commit.push_back(message);
                     }
-                    VoteType::CommitVote => {
+                    VoteType::CommitVote(_) => {
                         self.commit.push_back(message);
+                    }
+                    VoteType::NewView(_) => {
+                        todo!()
                     }
                 }
             }
