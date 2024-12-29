@@ -1,12 +1,12 @@
 use crate::decisions::DecisionNode;
 use crate::messages::VoteType;
-use atlas_common::crypto::threshold_crypto::{
-    CombinedSignature, PartialSignature, PrivateKeyPart, PublicKeyPart, PublicKeySet,
-};
+use atlas_common::crypto::threshold_crypto::{CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PublicKeyPart, PublicKeySet, VerifySignatureError};
 use atlas_common::ordering::SeqNo;
 use getset::Getters;
 use std::error::Error;
 use thiserror::Error;
+use atlas_common::node_id::NodeId;
+use crate::messages::serialize::serialize_vote_message;
 
 /// Threshold crypto related information storage
 #[derive(Getters)]
@@ -38,10 +38,12 @@ pub trait CryptoPartialSigProvider: Sync {
 
 pub trait CryptoSignatureCombiner: Sync {
     type CombinationError: Error + Send + Sync;
+    
+    type VerificationError: Error + Send + Sync;
 
     fn combine_signatures<CR>(
         crypto_info: &CR,
-        signature: &[PartialSignature],
+        signature: &[(NodeId, PartialSignature)],
     ) -> Result<CombinedSignature, Self::CombinationError>
     where
         CR: CryptoInformationProvider;
@@ -50,7 +52,7 @@ pub trait CryptoSignatureCombiner: Sync {
         crypto_info: &CR,
         signature: &CombinedSignature,
         message: &[u8],
-    ) -> Result<(), Self::CombinationError>
+    ) -> Result<(), Self::VerificationError>
     where
         CR: CryptoInformationProvider;
 
@@ -65,14 +67,14 @@ where
     CR: CryptoInformationProvider,
     CP: CryptoPartialSigProvider,
 {
-    let private_key_part = crypto_info.get_own_private_key();
-
-    todo!()
+    let bytes = serialize_vote_message(view, vote_msg);
+    
+    CP::sign_message(crypto_info, &bytes)
 }
 
 pub(crate) fn combine_partial_signatures<CR, CP>(
     crypto_info: &CR,
-    signatures: &[Option<PartialSignature>],
+    signatures: &[(NodeId, PartialSignature)],
 ) -> Result<CombinedSignature, ()>
 where
     CR: CryptoInformationProvider,
@@ -88,28 +90,30 @@ impl CryptoPartialSigProvider for AtlasTHCryptoProvider {
     where
         CR: CryptoInformationProvider,
     {
-        todo!()
+        crypto_info.get_own_private_key().partially_sign(message)
     }
 }
 
 impl CryptoSignatureCombiner for AtlasTHCryptoProvider {
-    type CombinationError = CombinationError;
+    type CombinationError = CombineSignatureError;
+    
+    type VerificationError = VerifySignatureError;
 
     fn combine_signatures<CR>(
         crypto_info: &CR,
-        signature: &[PartialSignature],
-    ) -> Result<CombinedSignature, CombinationError>
+        signature: &[(NodeId, PartialSignature)],
+    ) -> Result<CombinedSignature, Self::CombinationError>
     where
         CR: CryptoInformationProvider,
     {
-        todo!()
+        crypto_info.get_public_key_set().combine_signatures(signature.iter().map(|(id, sig)| (id.0 as u64, sig)))
     }
 
-    fn verify_combined_signature<CR>(crypto_info: &CR, signature: &CombinedSignature, message: &[u8]) -> Result<(), Self::CombinationError>
+    fn verify_combined_signature<CR>(crypto_info: &CR, signature: &CombinedSignature, message: &[u8]) -> Result<(), Self::VerificationError>
     where
         CR: CryptoInformationProvider
     {
-        todo!()
+        crypto_info.get_public_key_set().verify(message, signature)
     }
 }
 

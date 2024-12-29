@@ -23,7 +23,7 @@ where RQ: SerType {
     }
 }
 
-pub fn serialize_vote_message<RQ>(view_seq: SeqNo, vote_type: VoteType) -> Buf {
+pub fn serialize_vote_message(view_seq: SeqNo, vote_type: &VoteType) -> Buf {
     
     todo!()
     

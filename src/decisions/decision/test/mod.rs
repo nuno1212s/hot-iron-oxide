@@ -93,7 +93,7 @@ mod decision_test {
                 .map(|node| {
                     let index = (*node).into();
 
-                    let pub_key = self.pub_key_set.public_key_share(index).unwrap();
+                    let pub_key = self.pub_key_set.public_key_share(index);
 
                     (*node, pub_key)
                 })
@@ -342,7 +342,7 @@ mod decision_test {
             .map(|node_id| {
                 let crypto = cryptos_for.get(node_id).unwrap();
 
-                let vote_type = VoteType::<BlankProtocol>::NewView(None);
+                let vote_type = VoteType::NewView(None);
 
                 let msg_signature = get_partial_signature_for_message(&**crypto, decision.view().sequence_number(), &vote_type);
 

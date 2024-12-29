@@ -128,13 +128,12 @@ impl VoteStore {
             .max_by_key(|(_, votes)| votes.len());
 
         if let Some((node, votes)) = decision_node {
-            let signatures = view
-                .quorum_members()
+            let votes = votes
                 .iter()
-                .map(|member| votes.get(member).cloned())
-                .collect::<Vec<Option<PartialSignature>>>();
+                .map(|(node, sig)| (*node, sig.clone()))
+                .collect::<Vec<_>>();
 
-            match combine_partial_signatures::<CR, CP>(crypto_info, &signatures) {
+            match combine_partial_signatures::<CR, CP>(crypto_info, &votes) {
                 Ok(signature) => Ok(QC::new(
                     self.vote_type.clone(),
                     view.sequence_number(),
