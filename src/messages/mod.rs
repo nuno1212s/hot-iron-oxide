@@ -6,23 +6,23 @@ use serde::{Serialize, Deserialize};
 use getset::Getters;
 use atlas_common::crypto::threshold_crypto::{PartialSignature, CombinedSignature};
 use atlas_common::ordering::{Orderable, SeqNo};
-use crate::decisions::{DecisionNode, QC};
+use crate::decisions::{DecisionNode, DecisionNodeHeader, QC};
 
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
-pub enum VoteType<D> {
-    NewView(Option<QC<D>>),
-    PrepareVote(DecisionNode<D>),
-    PreCommitVote(DecisionNode<D>),
-    CommitVote(DecisionNode<D>),
+pub enum VoteType {
+    NewView(Option<QC>),
+    PrepareVote(DecisionNodeHeader),
+    PreCommitVote(DecisionNodeHeader),
+    CommitVote(DecisionNodeHeader),
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Getters)]
-pub struct VoteMessage<D> {
+pub struct VoteMessage {
     #[get = "pub"]
-    vote_type: VoteType<D>,
+    vote_type: VoteType,
     #[get = "pub"]
     signature: PartialSignature,
 }
@@ -30,10 +30,10 @@ pub struct VoteMessage<D> {
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
 pub enum ProposalType<D> {
-    Prepare(DecisionNode<D>, QC<D>),
-    PreCommit(QC<D>),
-    Commit(QC<D>),
-    Decide(QC<D>),
+    Prepare(DecisionNode<D>, QC),
+    PreCommit(QC),
+    Commit(QC),
+    Decide(QC),
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
@@ -47,7 +47,7 @@ pub struct ProposalMessage<D> {
 #[derive(Clone)]
 pub enum HotFeOxMsgType<D> {
     Proposal(ProposalMessage<D>),
-    Vote(VoteMessage<D>),
+    Vote(VoteMessage),
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
@@ -93,21 +93,21 @@ impl<D> From<ProposalMessage<D>> for ProposalType<D> {
     }
 }
 
-impl<D> VoteMessage<D> {
-    pub fn new(vote_type: VoteType<D>, sig: PartialSignature) -> Self {
+impl VoteMessage {
+    pub fn new(vote_type: VoteType, sig: PartialSignature) -> Self {
         Self {
             vote_type,
             signature: sig,
         }
     }
     
-    pub(crate) fn into_inner(self) -> (VoteType<D>, PartialSignature) {
+    pub(crate) fn into_inner(self) -> (VoteType, PartialSignature) {
         (self.vote_type, self.signature)
     }
 }
 
-impl<D> From<VoteMessage<D>> for DecisionNode<D> {
-    fn from(value: VoteMessage<D>) -> Self {
+impl From<VoteMessage> for DecisionNodeHeader {
+    fn from(value: VoteMessage) -> Self {
         match value.vote_type {
             VoteType::PrepareVote(dn) |
             VoteType::PreCommitVote(dn) |

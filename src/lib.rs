@@ -15,7 +15,7 @@ use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
 use std::sync::Arc;
 
-mod crypto;
+pub mod crypto;
 pub mod decisions;
 pub mod messages;
 mod request_provider;

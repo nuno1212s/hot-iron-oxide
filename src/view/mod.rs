@@ -1,8 +1,11 @@
+pub mod leader_allocation;
+
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::OrderProtocolTolerance;
 use crate::HotStuff;
+use crate::view::leader_allocation::LeaderAllocator;
 
 /// A view struct, containing a view of the current quorym
 #[derive(Clone, Debug)]
@@ -11,6 +14,32 @@ pub struct View {
     members: Vec<NodeId>,
     leader: NodeId,
     f: usize,
+}
+
+impl View {
+
+    pub fn new(seq: SeqNo, members: Vec<NodeId>, leader: NodeId, f: usize) -> Self {
+        Self {
+            seq,
+            members,
+            leader,
+            f,
+        }
+    }
+
+    pub fn new_from_quorum<L>(seq_no: SeqNo, members: Vec<NodeId>) -> Self
+    where L: LeaderAllocator {
+        let f = crate::get_f_for_n(members.len());
+        let leader = L::allocate_leader_from(&members, seq_no);
+        
+        Self::new(seq_no, members, leader, f)
+    }
+    
+    pub fn with_new_seq<L>(&self, seq: SeqNo) -> Self
+    where L: LeaderAllocator {
+        Self::new_from_quorum::<L>(seq, self.members.clone())
+    }
+
 }
 
 impl Orderable for View {

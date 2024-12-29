@@ -8,11 +8,8 @@ pub trait ClientRQProvider<RQ> {
     
 }
 
-
 pub struct BatchedRequestProvider<RQ> {
-    
     request_channel: BatchOutput<RQ>
-    
 }
 
 impl<RQ> ClientRQProvider<RQ> for BatchedRequestProvider<RQ> {

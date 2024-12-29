@@ -75,3 +75,16 @@ impl<D> HotStuffTBOQueue<D> {
         self.get_queue
     }
 }
+
+impl<RQ> Default for HotStuffTBOQueue<RQ>{
+    fn default() -> Self {
+        Self {
+            get_queue: false,
+            new_view: Default::default(),
+            prepare: Default::default(),
+            pre_commit: Default::default(),
+            commit: Default::default(),
+            decide: Default::default(),
+        }
+    }
+}
