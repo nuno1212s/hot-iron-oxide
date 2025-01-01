@@ -1,4 +1,3 @@
-use crate::decisions::DecisionNode;
 use crate::messages::VoteType;
 use atlas_common::crypto::threshold_crypto::{CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PublicKeyPart, PublicKeySet, VerifySignatureError};
 use atlas_common::ordering::SeqNo;
@@ -75,15 +74,17 @@ where
 pub(crate) fn combine_partial_signatures<CR, CP>(
     crypto_info: &CR,
     signatures: &[(NodeId, PartialSignature)],
-) -> Result<CombinedSignature, ()>
+) -> Result<CombinedSignature, CP::CombinationError>
 where
     CR: CryptoInformationProvider,
     CP: CryptoSignatureCombiner,
 {
-    todo!()
+    CP::combine_signatures(crypto_info, signatures)
 }
 
-struct AtlasTHCryptoProvider;
+pub struct AtlasTHCryptoProvider;
+
+impl CryptoProvider for AtlasTHCryptoProvider { }
 
 impl CryptoPartialSigProvider for AtlasTHCryptoProvider {
     fn sign_message<CR>(crypto_info: &CR, message: &[u8]) -> PartialSignature

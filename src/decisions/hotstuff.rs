@@ -187,14 +187,12 @@ where
         while self.can_finalize() {
             let decision = self.pop_front_decision();
 
-            let protocol_decision = ProtocolConsensusDecision::new(
-                decision.sequence_number(),
-                
-            );
+            /*let protocol_decision = ProtocolConsensusDecision::new(decision.sequence_number(),
+                                                                   /* executable_batch */, /* std::vec::Vec<atlas_core::messages::ClientRqInfo> */, /* atlas_common::crypto::hash::Digest */);
             
             let completed = Decision::completed_decision(decision.sequence_number(), protocol_decision);
             
-            to_finalize.push(completed);
+            to_finalize.push(completed);*/
         }
         
         if !to_finalize.is_empty() {

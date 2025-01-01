@@ -7,7 +7,7 @@ edition = "2021"
 
 [features]
 
-serialize_serde = ["serde", "atlas-common/serialize_serde", "atlas-core/serialize_serde", "atlas-communication/serialize_serde"]
+serialize_serde = ["atlas-common/serialize_serde", "atlas-core/serialize_serde", "atlas-communication/serialize_serde"]
 
 default = ["serialize_serde"]
 
@@ -23,5 +23,6 @@ lazy_static = "*"
 
 tracing = "*"
 either = "*"
-serde = { version = "1.0.216", features = ["derive"], optional = true }
+serde = { version = "1.0.216", features = ["derive"] }
 rand = "0.8.5"
+bincode = {version = "2.0.0-rc.3", features = ["default"]}

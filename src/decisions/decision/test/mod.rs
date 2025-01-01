@@ -21,8 +21,8 @@ mod decision_test {
     use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
     use atlas_core::ordering_protocol::networking::serialize::NetworkView;
     use rand::random;
-    use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider};
-    use crate::decisions::decision::HSDecision;
+    use crate::crypto::{get_partial_signature_for_message, AtlasTHCryptoProvider, CryptoInformationProvider};
+    use crate::decisions::decision::{DecisionPollResult, DecisionResult, HSDecision};
     use crate::decisions::DecisionHandler;
     use crate::decisions::req_aggr::ReqAggregator;
     use crate::messages::{HotFeOxMsg, HotFeOxMsgType, VoteMessage, VoteType};
@@ -72,7 +72,7 @@ mod decision_test {
 
             let nodes = (0..node_count).map(NodeId::from).collect::<Vec<_>>();
 
-            let private_key = PrivateKeySet::gen_random(node_count)?;
+            let private_key = PrivateKeySet::gen_random(node_count);
 
             let public_key = private_key.public_key_set();
 
@@ -83,10 +83,10 @@ mod decision_test {
             })
         }
 
-        fn create_mock_for(&self, node_id: NodeId) -> Result<CryptoInfoMock> {
+        fn create_mock_for(&self, node_id: NodeId) -> CryptoInfoMock {
 
             let index =  node_id.into();
-            let private_key_part = self.pkey_set.private_key_part(index)?;
+            let private_key_part = self.pkey_set.private_key_part(index);
 
 
             let public_key_parts = self.nodes.iter()
@@ -99,14 +99,13 @@ mod decision_test {
                 })
                 .collect::<HashMap<_, _>>();
 
-            Ok(CryptoInfoMock {
+            CryptoInfoMock {
                 id: node_id,
                 private_key_part,
                 public_key_parts,
                 pub_key_set: self.pub_key_set.clone(),
                 node_list: self.nodes.clone(),
-            })
-
+            }
         }
 
     }
@@ -314,8 +313,17 @@ mod decision_test {
 
     const NODE_COUNT: usize = 4;
 
-    #[test]
-    fn test_new_view_leader() {
+    struct Scenario {
+        nodes: Vec<NodeId>,
+        rq_aggr: Arc<RQAggr>,
+        mock_network_info_factory: MockNetworkInfoFactory,
+        node: Arc<NetworkNode>,
+        decision: HSDecision<BlankProtocol>,
+        crypto_info_mock_factory: CryptoInfoMockFactory,
+    }
+    
+    fn setup_scenario() -> Scenario {
+
         let nodes = (0..NODE_COUNT).map(NodeId::from).collect::<Vec<_>>();
 
         let rq_aggr = Arc::new(RQAggr);
@@ -324,19 +332,34 @@ mod decision_test {
 
         let node = setup_network_node::<BlankProtocol>(NodeId(0), &mock_info_factory);
 
-        let mut decision = setup_decision::<BlankProtocol>(None, None);
+        let decision = setup_decision::<BlankProtocol>(None, None);
 
         let threshold_crypto = CryptoInfoMockFactory::new(NODE_COUNT).unwrap();
-
-        let cryptos_for = nodes.iter()
-            .map(|node| (node.clone(), Arc::new(threshold_crypto.create_mock_for(*node).unwrap())))
+        
+        Scenario {
+            nodes,
+            rq_aggr,
+            mock_network_info_factory: mock_info_factory,
+            node,
+            decision,
+            crypto_info_mock_factory: threshold_crypto,
+        }
+    }
+    
+    #[test]
+    fn assert_queued_when_init() {
+        let mut scenario = setup_scenario();
+        
+        let cryptos_for = scenario.nodes.iter()
+            .map(|node| (node.clone(), Arc::new(scenario.crypto_info_mock_factory.create_mock_for(*node))))
             .collect::<HashMap<_, _>>();
 
-        let leader = decision.view().primary();
+        let leader = scenario.decision.view().primary();
+        let quorum = scenario.decision.view().quorum();
 
         let decision_handler = DecisionHandler::default();
 
-        let results = decision.view().quorum_members()
+        let results = scenario.decision.view().quorum_members()
             .clone().iter()
             .filter(|node| **node != leader)
             .map(|node_id| {
@@ -344,17 +367,74 @@ mod decision_test {
 
                 let vote_type = VoteType::NewView(None);
 
-                let msg_signature = get_partial_signature_for_message(&**crypto, decision.view().sequence_number(), &vote_type);
+                let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider>(&**crypto, scenario.decision.view().sequence_number(), &vote_type);
 
-                let new_view_message = HotFeOxMsg::new(decision.view().sequence_number(), HotFeOxMsgType::Vote(VoteMessage::new(vote_type, msg_signature)));
+                let new_view_message = HotFeOxMsg::new(scenario.decision.view().sequence_number(), HotFeOxMsgType::Vote(VoteMessage::new(vote_type, msg_signature)));
+
+                let stored_message = WireMessage::new(*node_id, leader, MessageModule::Protocol, Buf::new(), 0, None, None);
+
+                let header = stored_message.into_inner().0;
+
+                scenario.decision.process_message::<_, _, AtlasTHCryptoProvider, _>(Arc::new(StoredMessage::new(header, new_view_message)), &scenario.node, &decision_handler, crypto, &scenario.rq_aggr).unwrap()
+            }).collect::<Vec<_>>();
+        
+        assert!(
+            results.iter()
+                .all(|decision| {
+                    matches!(decision, DecisionResult::MessageQueued)
+                })
+        )
+    }
+    
+    #[test]
+    fn test_new_view_leader() {
+        let mut scenario = setup_scenario();
+
+        let cryptos_for = scenario.nodes.iter()
+            .map(|node| (node.clone(), Arc::new(scenario.crypto_info_mock_factory.create_mock_for(*node))))
+            .collect::<HashMap<_, _>>();
+
+        let leader = scenario.decision.view().primary();
+        let quorum = scenario.decision.view().quorum();
+
+        let decision_handler = DecisionHandler::default();
+        
+        assert!(matches!(scenario.decision.poll::<_, _, AtlasTHCryptoProvider>(&scenario.node, &decision_handler, cryptos_for.get(&leader).unwrap()), DecisionPollResult::Recv));
+
+        let results = scenario.decision.view().quorum_members()
+            .clone().iter()
+            .filter(|node| **node != leader)
+            .map(|node_id| {
+                let crypto = cryptos_for.get(node_id).unwrap();
+
+                let vote_type = VoteType::NewView(None);
+
+                let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider>(&**crypto, scenario.decision.view().sequence_number(), &vote_type);
+
+                let new_view_message = HotFeOxMsg::new(scenario.decision.view().sequence_number(), HotFeOxMsgType::Vote(VoteMessage::new(vote_type, msg_signature)));
 
                 let stored_message = WireMessage::new(*node_id, leader, MessageModule::Protocol, Buf::new(), 0, None, None);
                 
                 let header = stored_message.into_inner().0;
 
-                decision.process_message(Arc::new(StoredMessage::new(header, new_view_message)), &node, &decision_handler, crypto, &rq_aggr).unwrap()
+                scenario.decision.process_message::<_, _, AtlasTHCryptoProvider, _>(Arc::new(StoredMessage::new(header, new_view_message)), &scenario.node, &decision_handler, crypto, &scenario.rq_aggr).unwrap()
             }).collect::<Vec<_>>();
         
+        assert_eq!(1, 
+                   results.iter()
+            .filter(|decision| {
+                matches!(decision, DecisionResult::Decided(_))
+            }).count());
         
+        assert_eq!(quorum - 1, 
+            results.iter()
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(_))
+                }).count());
+        
+        assert_eq!(1,
+        results.iter().filter(|decision| {
+            matches!(decision, DecisionResult::MessageIgnored)
+        }).count());
     }
 }

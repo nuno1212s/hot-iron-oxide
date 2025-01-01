@@ -211,7 +211,14 @@ where
         let is_leader = self.is_leader();
 
         match &mut self.current_state {
-            DecisionState::Init => unreachable!(),
+            DecisionState::Init if self.view.sequence_number() == message.sequence_number()  => {
+                self.decision_queue.queue_message(message);
+                
+                Ok(DecisionResult::MessageQueued)
+            },
+            DecisionState::Init => {
+                Ok(DecisionResult::MessageIgnored)
+            }
             DecisionState::Prepare(received) if is_leader => {
                 let (i, qc, signature) = match message.message().clone().into() {
                     HotFeOxMsgType::Vote(vote_msg)

@@ -60,7 +60,7 @@ impl<D> HotStuffTBOQueue<D> {
                         self.commit.push_back(message);
                     }
                     VoteType::NewView(_) => {
-                        todo!()
+                        self.new_view.push_back(message);
                     }
                 }
             }
