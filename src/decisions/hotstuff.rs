@@ -15,6 +15,7 @@ use atlas_core::timeouts::timeout::TimeoutModHandle;
 use either::Either;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, VecDeque};
+use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, instrument};
@@ -209,7 +210,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         crypto: &Arc<CR>,
-    ) -> Result<ConsensusStatus<RQ>, ProcessMessageErr>
+    ) -> Result<ConsensusStatus<RQ>, ProcessMessageErr<CP::CombinationError>>
     where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
@@ -299,7 +300,7 @@ impl Signals {
 }
 
 #[derive(Error, Debug)]
-pub enum ProcessMessageErr {
+pub enum ProcessMessageErr<CS: Error> {
     #[error("Decision Error during processing {0}")]
-    DecisionError(#[from] DecisionError),
+    DecisionError(#[from] DecisionError<CS>),
 }

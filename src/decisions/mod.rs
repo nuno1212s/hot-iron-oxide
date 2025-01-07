@@ -127,10 +127,10 @@ impl<D> DecisionNode<D> {
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Getters, CopyGetters)]
+#[derive(Clone, Getters, CopyGetters, Hash, PartialEq, Eq)]
 /// A quorum certificate
 pub struct QC {
-    #[get = "pub"]
+    #[get_copy = "pub"]
     qc_type: QCType,
     #[get_copy = "pub"]
     view_seq: SeqNo,
@@ -152,6 +152,12 @@ impl QC {
             decision_node,
             signature,
         }
+    }
+}
+
+impl Orderable for QC {
+    fn sequence_number(&self) -> SeqNo {
+        self.view_seq
     }
 }
 
@@ -179,7 +185,7 @@ impl<D> Clone for DecisionNode<D> {
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash,Copy)]
 pub enum QCType {
     PrepareVote,
     PreCommitVote,

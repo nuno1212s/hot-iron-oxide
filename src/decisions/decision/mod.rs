@@ -1,9 +1,8 @@
 mod test;
 
+use std::error::Error;
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
-use crate::decisions::log::{
-    DecisionLog, MsgDecisionLog, NewViewAcceptError, VoteAcceptError, VoteStoreError,
-};
+use crate::decisions::log::{DecisionLog, MsgDecisionLog, NewViewAcceptError, NewViewGenerateError, VoteAcceptError, VoteStoreError};
 use crate::decisions::msg_queue::HotStuffTBOQueue;
 use crate::decisions::req_aggr::{ReqAggregator, RequestAggr};
 use crate::decisions::{DecisionHandler, DecisionNode, QCType, QC};
@@ -97,7 +96,7 @@ where
     where
         NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
         CR: CryptoInformationProvider,
-        CP: CryptoProvider
+        CP: CryptoProvider,
     {
         match self.current_state {
             DecisionState::Init if !self.is_leader() => {
@@ -111,8 +110,11 @@ where
                     move || {
                         let vote_type = VoteType::NewView(latest_qc);
 
-                        let partial_sig =
-                            get_partial_signature_for_message::<CR, CP>(&*crypto_info, seq, &vote_type);
+                        let partial_sig = get_partial_signature_for_message::<CR, CP>(
+                            &*crypto_info,
+                            seq,
+                            &vote_type,
+                        );
 
                         quiet_unwrap!(network.send(
                             HotFeOxMsg::new(
@@ -201,31 +203,29 @@ where
         dec_handler: &DecisionHandler<RQ>,
         crypto: &Arc<CR>,
         req_aggr: &Arc<RQA>,
-    ) -> Result<DecisionResult<RQ>, DecisionError>
+    ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
         NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
         CR: CryptoInformationProvider,
         RQA: ReqAggregator<RQ>,
-        CP: CryptoProvider
+        CP: CryptoProvider,
     {
         let is_leader = self.is_leader();
 
         match &mut self.current_state {
-            DecisionState::Init if self.view.sequence_number() == message.sequence_number()  => {
+            DecisionState::Init if self.view.sequence_number() == message.sequence_number() => {
                 self.decision_queue.queue_message(message);
-                
+
                 Ok(DecisionResult::MessageQueued)
-            },
-            DecisionState::Init => {
-                Ok(DecisionResult::MessageIgnored)
             }
+            DecisionState::Init => Ok(DecisionResult::MessageIgnored),
             DecisionState::Prepare(received) if is_leader => {
-                let (i, qc, signature) = match message.message().clone().into() {
+                let vote_message = match message.message().clone().into() {
                     HotFeOxMsgType::Vote(vote_msg)
                         if self.view.sequence_number() == message.sequence_number() =>
                     {
-                        match vote_msg.into_inner() {
-                            (VoteType::NewView(qc), signature) => (*received + 1, qc, signature),
+                        match vote_msg.vote_type() {
+                            VoteType::NewView(_) => vote_msg,
                             _ => {
                                 self.decision_queue.queue_message(message);
 
@@ -247,27 +247,29 @@ where
 
                 let leader_log = self.msg_decision_log.as_mut_leader().unwrap();
 
-                *received = i;
+                *received += 1;
 
-                if let Some(qc) = qc {
-                    leader_log.new_view_store().accept_new_view(qc)?;
-                }
+                leader_log
+                    .new_view_store()
+                    .accept_new_view(message.header().from(), vote_message)?;
 
                 if *received >= self.view.quorum() {
-                    let qc = leader_log.new_view_store().get_high_qc();
+                    let high_qc = leader_log.new_view_store().get_high_qc();
 
                     let (pooled_request, digest) = req_aggr.take_pool_requests();
 
-                    let node = if let Some(qc) = qc {
+                    let node = if let Some(qc) = high_qc {
                         DecisionNode::create_leaf(&qc.decision_node(), digest, pooled_request)
                     } else {
                         DecisionNode::create_root_leaf(&self.view, digest, pooled_request)
                     };
 
                     self.decision_log.set_current_proposal(Some(node.clone()));
+                    
+                    let new_qc = leader_log.new_view_store().create_new_qc::<_, CP>(&**crypto, &node.decision_header())?;
 
                     let msg = HotFeOxMsgType::Proposal(ProposalMessage::new(
-                        ProposalType::Prepare(node, qc.unwrap().clone()),
+                        ProposalType::Prepare(node, new_qc),
                     ));
 
                     let _ = network.broadcast(
@@ -376,8 +378,11 @@ where
                 leader_log.accept_vote(message.header().from(), vote_msg)?;
 
                 if *received >= self.view.quorum() {
-                    let created_qc =
-                        leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::PrepareVote)?;
+                    let created_qc = leader_log.generate_qc::<CR, CP>(
+                        &**crypto,
+                        &self.view,
+                        QCType::PrepareVote,
+                    )?;
 
                     let view_seq = self.view.sequence_number();
 
@@ -498,8 +503,11 @@ where
                 leader_log.accept_vote(message.header().from(), vote_msg)?;
 
                 if *received >= self.view.quorum() {
-                    let created_qc =
-                        leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::PreCommitVote)?;
+                    let created_qc = leader_log.generate_qc::<CR, CP>(
+                        &**crypto,
+                        &self.view,
+                        QCType::PreCommitVote,
+                    )?;
 
                     let view_seq = self.view.sequence_number();
 
@@ -618,8 +626,11 @@ where
                 leader_log.accept_vote(message.header().from(), vote_msg)?;
 
                 if *received >= self.view.quorum() {
-                    let created_qc =
-                        leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::CommitVote)?;
+                    let created_qc = leader_log.generate_qc::<CR, CP>(
+                        &**crypto,
+                        &self.view,
+                        QCType::CommitVote,
+                    )?;
 
                     let view_seq = self.view.sequence_number();
 
@@ -683,7 +694,7 @@ impl<RQ> Orderable for HSDecision<RQ> {
 }
 
 #[derive(Error, Debug)]
-pub enum DecisionError {
+pub enum DecisionError<CS: Error> {
     #[error("Received a prepare message with an invalid qc")]
     PrepareMessageWithEmptyQC,
     #[error("No QC was available to create the decision")]
@@ -694,4 +705,6 @@ pub enum DecisionError {
     VoteStoreError(#[from] VoteStoreError),
     #[error("New view accept error {0}")]
     NewViewAcceptError(#[from] NewViewAcceptError),
+    #[error("Failed to generate new QC {0}")]
+    NewViewGenerateError(#[from] NewViewGenerateError<CS>)
 }

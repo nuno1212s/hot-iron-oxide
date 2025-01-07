@@ -1,9 +1,10 @@
-use crate::crypto::{combine_partial_signatures, CryptoInformationProvider, CryptoProvider};
+use std::error::Error;
+use crate::crypto::{combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner};
 use crate::decisions::{DecisionNode, DecisionNodeHeader, QCType, QC};
 use crate::messages::{ProposalMessage, ProposalType, VoteMessage, VoteType};
 use crate::view::View;
 use atlas_common::collections::HashMap;
-use atlas_common::crypto::threshold_crypto::PartialSignature;
+use atlas_common::crypto::threshold_crypto::{CombineSignatureError, PartialSignature};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
@@ -34,7 +35,7 @@ pub struct VoteStore {
 }
 
 pub struct NewViewStore {
-    prepare_qcs: Vec<QC>,
+    new_view: HashMap<Option<QC>, HashMap<NodeId, PartialSignature>>,
 }
 
 pub struct LeaderDecisionLog {
@@ -235,22 +236,67 @@ impl Default for ReplicaDecisionLog {
 impl NewViewStore {
     pub(in super::super) fn accept_new_view(
         &mut self,
-        new_view_qc: QC,
+        voter: NodeId,
+        vote_message: VoteMessage,
     ) -> Result<(), NewViewAcceptError> {
-        self.prepare_qcs.push(new_view_qc);
+        let (qc, sig) = match vote_message.into_inner() {
+            (VoteType::NewView(qc), sig) => (qc.clone(), sig),
+            _ => return Err(NewViewAcceptError::WrongMessageType),
+        };
+
+        self.new_view
+            .entry(qc)
+            .or_insert_with(HashMap::default)
+            .insert(voter, sig);
 
         Ok(())
     }
 
     pub(in super::super) fn get_high_qc(&self) -> Option<&QC> {
-        self.prepare_qcs.iter().max_by_key(|f| f.view_seq())
+        self.new_view.keys().max_by_key(|qc| qc.as_ref().map(|qc| qc.sequence_number()))
+            .map(Option::as_ref).flatten()
+    }
+    
+    pub(in super::super) fn create_new_qc<CR, CP>(&self, crypto_info: &CR, decision_node_header: &DecisionNodeHeader) -> Result<QC, NewViewGenerateError<CP::CombinationError>>
+    where
+        CR: CryptoInformationProvider,
+        CP: CryptoSignatureCombiner,
+    {
+        let (qc, votes) = self
+            .new_view
+            .iter()
+            .max_by_key(|(qc, _)| qc.as_ref().map(|f| f.sequence_number()))
+            .unwrap();
+
+        let votes = votes
+            .iter()
+            .map(|(node, sig)| (*node, sig.clone()))
+            .collect::<Vec<_>>();
+
+        let combined_signature = combine_partial_signatures::<_, CP>(crypto_info, &votes).map_err(|err| NewViewGenerateError::FailedToCombinePartialSignatures(err))?;
+
+        if let Some(qc) = qc {
+            Ok(QC::new(
+                QCType::PrepareVote,
+                qc.view_seq(),
+                decision_node_header.clone(),
+                combined_signature
+            ))
+        } else {
+            Ok(QC::new(
+                QCType::PrepareVote,
+                SeqNo::ONE,
+                decision_node_header.clone(),
+                combined_signature
+            ))
+        }
     }
 }
 
 impl Default for NewViewStore {
     fn default() -> Self {
         Self {
-            prepare_qcs: Vec::default(),
+            new_view: HashMap::default(),
         }
     }
 }
@@ -282,4 +328,15 @@ pub enum ProposalAcceptError {
 }
 
 #[derive(Error, Debug)]
-pub enum NewViewAcceptError {}
+pub enum NewViewAcceptError {
+    #[error("Wrong message passed")]
+    WrongMessageType,
+}
+
+#[derive(Error, Debug)]
+pub enum NewViewGenerateError<CS: Error> {
+    #[error("Failed to generate high qc")]
+    FailedToGenerateHighQC,
+    #[error("Failed to combine partial signatures")]
+    FailedToCombinePartialSignatures(#[from] CS),
+}
