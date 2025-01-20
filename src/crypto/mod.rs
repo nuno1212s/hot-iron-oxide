@@ -1,3 +1,5 @@
+mod test;
+
 use crate::messages::VoteType;
 use atlas_common::crypto::threshold_crypto::{CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PublicKeyPart, PublicKeySet, VerifySignatureError};
 use atlas_common::ordering::SeqNo;
@@ -31,6 +33,15 @@ pub trait CryptoProvider: CryptoSignatureCombiner + CryptoPartialSigProvider {}
 
 pub trait CryptoPartialSigProvider: Sync {
     fn sign_message<CR>(crypto_info: &CR, message: &[u8]) -> PartialSignature
+    where
+        CR: CryptoInformationProvider;
+    
+    fn verify_partial_signature_by_node<CR>(
+        crypto_info: &CR,
+        node_index: usize,
+        signature: &PartialSignature,
+        message: &[u8],
+    ) -> Result<(), VerifySignatureError>
     where
         CR: CryptoInformationProvider;
 }
@@ -92,6 +103,18 @@ impl CryptoPartialSigProvider for AtlasTHCryptoProvider {
         CR: CryptoInformationProvider,
     {
         crypto_info.get_own_private_key().partially_sign(message)
+    }
+    
+    fn verify_partial_signature_by_node<CR>(
+        crypto_info: &CR,
+        node_index: usize,
+        signature: &PartialSignature,
+        message: &[u8],
+    ) -> Result<(), VerifySignatureError>
+    where
+        CR: CryptoInformationProvider,
+    {
+        crypto_info.get_public_key_for_index(node_index).verify(message, signature)
     }
 }
 

@@ -1,8 +1,10 @@
 mod test;
 
-use std::error::Error;
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
-use crate::decisions::log::{DecisionLog, MsgDecisionLog, NewViewAcceptError, NewViewGenerateError, VoteAcceptError, VoteStoreError};
+use crate::decisions::log::{
+    DecisionLog, DecisionLogType, MsgDecisionLog, NewViewAcceptError, NewViewGenerateError,
+    VoteAcceptError, VoteStoreError,
+};
 use crate::decisions::msg_queue::HotStuffTBOQueue;
 use crate::decisions::req_aggr::{ReqAggregator, RequestAggr};
 use crate::decisions::{DecisionHandler, DecisionNode, QCType, QC};
@@ -18,7 +20,8 @@ use atlas_common::{quiet_unwrap, threadpool};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::ShareableMessage;
-use getset::Getters;
+use getset::{Getters, Setters};
+use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
@@ -33,15 +36,16 @@ pub enum DecisionState {
 }
 
 /// The decision for a given object
-#[derive(Getters)]
+#[derive(Getters, Setters)]
 pub struct HSDecision<D> {
     #[get = "pub"]
     view: View,
     node_id: NodeId,
-    #[get = "pub"]
+    #[getset(get = "pub (super)", set = "pub (super)")]
     current_state: DecisionState,
     decision_queue: HotStuffTBOQueue<D>,
     msg_decision_log: MsgDecisionLog,
+    #[getset(get = "pub (super)")]
     decision_log: DecisionLog<D>,
 }
 
@@ -76,13 +80,19 @@ where
             MsgDecisionLog::Replica(Default::default())
         };
 
+        let decision_log_type = if view.primary() == node_id {
+            DecisionLogType::Leader(Default::default())
+        } else {
+            DecisionLogType::Replica(Default::default())
+        };
+
         HSDecision {
             view,
             node_id,
             current_state: DecisionState::Init,
             decision_queue: HotStuffTBOQueue::default(),
             msg_decision_log,
-            decision_log: DecisionLog::default(),
+            decision_log: DecisionLog::new(decision_log_type),
         }
     }
 
@@ -265,8 +275,10 @@ where
                     };
 
                     self.decision_log.set_current_proposal(Some(node.clone()));
-                    
-                    let new_qc = leader_log.new_view_store().create_new_qc::<_, CP>(&**crypto, &node.decision_header())?;
+
+                    let new_qc = leader_log
+                        .new_view_store()
+                        .create_new_qc::<_, CP>(&**crypto, &node.decision_header())?;
 
                     let msg = HotFeOxMsgType::Proposal(ProposalMessage::new(
                         ProposalType::Prepare(node, new_qc),
@@ -308,7 +320,7 @@ where
                 if dec_handler.safe_node(&node, &qc) && node.extends_from(&qc.decision_node()) {
                     let short_node = node.decision_header();
 
-                    self.decision_log.set_prepare_qc(Some(qc));
+                    self.decision_log.set_current_proposal(Some(node.clone()));
 
                     threadpool::execute({
                         let network = network.clone();
@@ -386,26 +398,19 @@ where
 
                     let view_seq = self.view.sequence_number();
 
-                    self.decision_log.set_prepare_qc(Some(created_qc.clone()));
+                    self.decision_log
+                        .as_mut_leader()
+                        .set_prepare_qc(created_qc.clone());
 
-                    threadpool::execute({
-                        let view_members = self.view.quorum_members().clone();
-                        let created_qc = created_qc.clone();
-                        let network = network.clone();
+                    let view_members = self.view.quorum_members().clone();
 
-                        move || {
-                            let prop = ProposalType::PreCommit(created_qc);
+                    let prop = ProposalType::PreCommit(created_qc.clone());
 
-                            let proposal_message = ProposalMessage::new(prop);
+                    let proposal_message = ProposalMessage::new(prop);
 
-                            let msg = HotFeOxMsg::new(
-                                view_seq,
-                                HotFeOxMsgType::Proposal(proposal_message),
-                            );
+                    let msg = HotFeOxMsg::new(view_seq, HotFeOxMsgType::Proposal(proposal_message));
 
-                            let _ = network.broadcast(msg, view_members.into_iter());
-                        }
-                    });
+                    let _ = network.broadcast(msg, view_members.into_iter());
 
                     self.current_state = DecisionState::Commit(0);
 
@@ -435,7 +440,9 @@ where
                     _ => return Ok(DecisionResult::MessageIgnored),
                 };
 
-                self.decision_log.set_prepare_qc(Some(qc.clone()));
+                self.decision_log
+                    .as_mut_replica()
+                    .set_prepare_qc(qc.clone());
 
                 threadpool::execute({
                     let network = network.clone();
@@ -512,7 +519,8 @@ where
                     let view_seq = self.view.sequence_number();
 
                     self.decision_log
-                        .set_pre_commit_qc(Some(created_qc.clone()));
+                        .as_mut_leader()
+                        .set_pre_commit_qc(created_qc.clone());
 
                     threadpool::execute({
                         let view_members = self.view.quorum_members().clone();
@@ -561,7 +569,7 @@ where
                     _ => return Ok(DecisionResult::MessageIgnored),
                 };
 
-                self.decision_log.set_commit_qc(Some(qc.clone()));
+                self.decision_log.as_mut_replica().set_locked_qc(qc.clone());
 
                 threadpool::execute({
                     let network = network.clone();
@@ -634,7 +642,9 @@ where
 
                     let view_seq = self.view.sequence_number();
 
-                    self.decision_log.set_commit_qc(Some(created_qc.clone()));
+                    self.decision_log
+                        .as_mut_leader()
+                        .set_commit_qc(created_qc.clone());
 
                     threadpool::execute({
                         let view_members = self.view.quorum_members().clone();
@@ -702,9 +712,9 @@ pub enum DecisionError<CS: Error> {
     #[error("Vote accept error {0}")]
     VoteAcceptError(#[from] VoteAcceptError),
     #[error("Vote store error {0}")]
-    VoteStoreError(#[from] VoteStoreError),
+    VoteStoreError(#[from] VoteStoreError<CS>),
     #[error("New view accept error {0}")]
     NewViewAcceptError(#[from] NewViewAcceptError),
     #[error("Failed to generate new QC {0}")]
-    NewViewGenerateError(#[from] NewViewGenerateError<CS>)
+    NewViewGenerateError(#[from] NewViewGenerateError<CS>),
 }

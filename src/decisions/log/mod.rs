@@ -1,32 +1,46 @@
-use std::error::Error;
-use crate::crypto::{combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner};
+use crate::crypto::{
+    combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner,
+};
 use crate::decisions::{DecisionNode, DecisionNodeHeader, QCType, QC};
 use crate::messages::{ProposalMessage, ProposalType, VoteMessage, VoteType};
 use crate::view::View;
 use atlas_common::collections::HashMap;
-use atlas_common::crypto::threshold_crypto::{CombineSignatureError, PartialSignature};
+use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use getset::{Getters, Setters};
+use getset::{Getters, MutGetters, Setters};
+use std::error::Error;
 use thiserror::Error;
 
 /// The log of votes for a given decision instance
 pub enum MsgDecisionLog {
+    Leader(MsgLeaderDecisionLog),
+    Replica(MsgReplicaDecisionLog),
+}
+
+#[derive(Default)]
+pub struct LeaderDecisionLog {
+    prepare_qc: Option<QC>,
+    pre_commit_qc: Option<QC>,
+    commit_qc: Option<QC>,
+}
+
+#[derive(Default)]
+pub struct ReplicaDecisionLog {
+    prepare_qc: Option<QC>,
+    locked_qc: Option<QC>,
+}
+
+pub enum DecisionLogType {
     Leader(LeaderDecisionLog),
     Replica(ReplicaDecisionLog),
 }
 
-#[derive(Setters, Getters)]
+#[derive(Setters, Getters, MutGetters)]
 pub struct DecisionLog<D> {
-    #[getset(get = "pub", set = "pub")]
+    #[getset(get = "pub(super)", set = "pub(super)")]
     current_proposal: Option<DecisionNode<D>>,
-    #[getset(get = "pub", set = "pub")]
-    prepare_qc: Option<QC>,
-    #[getset(get = "pub", set = "pub")]
-    pre_commit_qc: Option<QC>,
-    #[getset(get = "pub", set = "pub")]
-    commit_qc: Option<QC>,
+    decision_log_type: DecisionLogType,
 }
 
 pub struct VoteStore {
@@ -38,15 +52,15 @@ pub struct NewViewStore {
     new_view: HashMap<Option<QC>, HashMap<NodeId, PartialSignature>>,
 }
 
-pub struct LeaderDecisionLog {
+pub struct MsgLeaderDecisionLog {
     high_qc: NewViewStore,
     prepare_qc: VoteStore,
     pre_commit_qc: VoteStore,
     commit_qc: VoteStore,
 }
 
-#[derive(Getters)]
-pub struct ReplicaDecisionLog {
+#[derive(Default, Getters)]
+pub struct MsgReplicaDecisionLog {
     #[get = "pub(super)"]
     prepare_qc: Option<QC>,
     #[get = "pub(super)"]
@@ -54,28 +68,28 @@ pub struct ReplicaDecisionLog {
 }
 
 impl MsgDecisionLog {
-    pub fn as_replica(&self) -> Option<&ReplicaDecisionLog> {
+    pub fn as_replica(&self) -> Option<&MsgReplicaDecisionLog> {
         match self {
             MsgDecisionLog::Replica(replica) => Some(replica),
             _ => None,
         }
     }
 
-    pub fn as_leader(&self) -> Option<&LeaderDecisionLog> {
+    pub fn as_leader(&self) -> Option<&MsgLeaderDecisionLog> {
         match self {
             MsgDecisionLog::Leader(leader) => Some(leader),
             _ => None,
         }
     }
 
-    pub fn as_mut_replica(&mut self) -> Option<&mut ReplicaDecisionLog> {
+    pub fn as_mut_replica(&mut self) -> Option<&mut MsgReplicaDecisionLog> {
         match self {
             MsgDecisionLog::Replica(replica) => Some(replica),
             _ => None,
         }
     }
 
-    pub fn as_mut_leader(&mut self) -> Option<&mut LeaderDecisionLog> {
+    pub fn as_mut_leader(&mut self) -> Option<&mut MsgLeaderDecisionLog> {
         match self {
             MsgDecisionLog::Leader(leader) => Some(leader),
             _ => None,
@@ -83,15 +97,71 @@ impl MsgDecisionLog {
     }
 }
 
-impl<D> Default for DecisionLog<D> {
-    fn default() -> Self {
+impl ReplicaDecisionLog {
+
+    pub fn set_prepare_qc(&mut self, qc: QC) {
+        self.prepare_qc = Some(qc);
+    }
+
+    pub fn set_locked_qc(&mut self, qc: QC) {
+        self.locked_qc = Some(qc);
+    }
+
+}
+
+impl LeaderDecisionLog {
+
+    pub fn set_prepare_qc(&mut self, qc: QC) {
+        self.prepare_qc = Some(qc);
+    }
+
+    pub fn set_pre_commit_qc(&mut self, qc: QC) {
+        self.pre_commit_qc = Some(qc);
+    }
+
+    pub fn set_commit_qc(&mut self, qc: QC) {
+        self.commit_qc = Some(qc);
+    }
+
+}
+
+impl<D> DecisionLog<D> {
+    
+    pub fn new(decision_log_type: DecisionLogType) -> Self {
         Self {
-            current_proposal: Option::default(),
-            prepare_qc: Option::default(),
-            pre_commit_qc: Option::default(),
-            commit_qc: Option::default(),
+            current_proposal: Default::default(),
+            decision_log_type,
         }
     }
+    
+    pub fn as_replica(&self) -> &ReplicaDecisionLog {
+        match &self.decision_log_type {
+            DecisionLogType::Replica(replica) => replica,
+            _ => unreachable!(),
+        }
+    }
+    
+    pub fn as_mut_replica(&mut self) -> &mut ReplicaDecisionLog {
+        match &mut self.decision_log_type {
+            DecisionLogType::Replica(replica) => replica,
+            _ => unreachable!(),
+        }
+    }
+    
+    pub fn as_leader(&self) -> &LeaderDecisionLog {
+        match &self.decision_log_type {
+            DecisionLogType::Leader(leader) => leader,
+            _ => unreachable!(),
+        }
+    }
+    
+    pub fn as_mut_leader(&mut self) -> &mut LeaderDecisionLog {
+        match &mut self.decision_log_type {
+            DecisionLogType::Leader(leader) => leader,
+            _ => unreachable!(),
+        }
+    }
+    
 }
 
 impl VoteStore {
@@ -110,7 +180,7 @@ impl VoteStore {
     ) {
         self.decision_nodes
             .entry(voted_node)
-            .or_insert_with(HashMap::default)
+            .or_default()
             .insert(voter, vote_signature);
     }
 
@@ -118,7 +188,7 @@ impl VoteStore {
         &mut self,
         crypto_info: &CR,
         view: &View,
-    ) -> Result<QC, VoteStoreError>
+    ) -> Result<QC, VoteStoreError<CP::CombinationError>>
     where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
@@ -136,12 +206,12 @@ impl VoteStore {
 
             match combine_partial_signatures::<CR, CP>(crypto_info, &votes) {
                 Ok(signature) => Ok(QC::new(
-                    self.vote_type.clone(),
+                    self.vote_type,
                     view.sequence_number(),
-                    node.clone(),
+                    *node,
                     signature,
                 )),
-                Err(err) => Err(VoteStoreError::FailedToCreateCombinedSignature),
+                Err(err) => Err(err.into()),
             }
         } else {
             Err(VoteStoreError::NoDecisionNode)
@@ -149,7 +219,7 @@ impl VoteStore {
     }
 }
 
-impl LeaderDecisionLog {
+impl MsgLeaderDecisionLog {
     pub(in super::super) fn new_view_store(&mut self) -> &mut NewViewStore {
         &mut self.high_qc
     }
@@ -178,7 +248,7 @@ impl LeaderDecisionLog {
         crypto_info: &CR,
         view: &View,
         qc_type: QCType,
-    ) -> Result<QC, VoteStoreError>
+    ) -> Result<QC, VoteStoreError<CP::CombinationError>>
     where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
@@ -191,7 +261,7 @@ impl LeaderDecisionLog {
     }
 }
 
-impl Default for LeaderDecisionLog {
+impl Default for MsgLeaderDecisionLog {
     fn default() -> Self {
         Self {
             high_qc: NewViewStore::default(),
@@ -202,7 +272,7 @@ impl Default for LeaderDecisionLog {
     }
 }
 
-impl ReplicaDecisionLog {
+impl MsgReplicaDecisionLog {
     pub(in super::super) fn accept_proposal<D>(
         &mut self,
         proposal: ProposalMessage<D>,
@@ -224,15 +294,6 @@ impl ReplicaDecisionLog {
     }
 }
 
-impl Default for ReplicaDecisionLog {
-    fn default() -> Self {
-        Self {
-            prepare_qc: Option::default(),
-            locked_qc: Option::default(),
-        }
-    }
-}
-
 impl NewViewStore {
     pub(in super::super) fn accept_new_view(
         &mut self,
@@ -244,20 +305,23 @@ impl NewViewStore {
             _ => return Err(NewViewAcceptError::WrongMessageType),
         };
 
-        self.new_view
-            .entry(qc)
-            .or_insert_with(HashMap::default)
-            .insert(voter, sig);
+        self.new_view.entry(qc).or_default().insert(voter, sig);
 
         Ok(())
     }
 
     pub(in super::super) fn get_high_qc(&self) -> Option<&QC> {
-        self.new_view.keys().max_by_key(|qc| qc.as_ref().map(|qc| qc.sequence_number()))
-            .map(Option::as_ref).flatten()
+        self.new_view
+            .keys()
+            .max_by_key(|qc| qc.as_ref().map(|qc| qc.sequence_number()))
+            .and_then(Option::as_ref)
     }
-    
-    pub(in super::super) fn create_new_qc<CR, CP>(&self, crypto_info: &CR, decision_node_header: &DecisionNodeHeader) -> Result<QC, NewViewGenerateError<CP::CombinationError>>
+
+    pub(in super::super) fn create_new_qc<CR, CP>(
+        &self,
+        crypto_info: &CR,
+        decision_node_header: &DecisionNodeHeader,
+    ) -> Result<QC, NewViewGenerateError<CP::CombinationError>>
     where
         CR: CryptoInformationProvider,
         CP: CryptoSignatureCombiner,
@@ -266,28 +330,29 @@ impl NewViewStore {
             .new_view
             .iter()
             .max_by_key(|(qc, _)| qc.as_ref().map(|f| f.sequence_number()))
-            .unwrap();
+            .ok_or(NewViewGenerateError::NotEnoughVotes)?;
 
         let votes = votes
             .iter()
             .map(|(node, sig)| (*node, sig.clone()))
             .collect::<Vec<_>>();
 
-        let combined_signature = combine_partial_signatures::<_, CP>(crypto_info, &votes).map_err(|err| NewViewGenerateError::FailedToCombinePartialSignatures(err))?;
+        let combined_signature = combine_partial_signatures::<_, CP>(crypto_info, &votes)
+            .map_err(NewViewGenerateError::FailedToCombinePartialSignatures)?;
 
         if let Some(qc) = qc {
             Ok(QC::new(
                 QCType::PrepareVote,
                 qc.view_seq(),
-                decision_node_header.clone(),
-                combined_signature
+                *decision_node_header,
+                combined_signature,
             ))
         } else {
             Ok(QC::new(
                 QCType::PrepareVote,
                 SeqNo::ONE,
-                decision_node_header.clone(),
-                combined_signature
+                *decision_node_header,
+                combined_signature,
             ))
         }
     }
@@ -308,11 +373,11 @@ pub enum DecisionError {
 }
 
 #[derive(Error, Debug)]
-pub enum VoteStoreError {
+pub enum VoteStoreError<CS: Error> {
     #[error("There is no decision node present")]
     NoDecisionNode,
-    #[error("Failed to create combined signature")]
-    FailedToCreateCombinedSignature,
+    #[error("Failed to create combined signature {0:?}")]
+    FailedToCreateCombinedSignature(#[from] CS),
 }
 
 #[derive(Error, Debug)]
@@ -337,6 +402,8 @@ pub enum NewViewAcceptError {
 pub enum NewViewGenerateError<CS: Error> {
     #[error("Failed to generate high qc")]
     FailedToGenerateHighQC,
-    #[error("Failed to combine partial signatures")]
+    #[error("Failed to combine partial signatures {0:?}")]
     FailedToCombinePartialSignatures(#[from] CS),
+    #[error("Failed to collect the highest vote")]
+    NotEnoughVotes,
 }

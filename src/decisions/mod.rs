@@ -45,12 +45,11 @@ pub struct DecisionHandler<D>(PhantomData<fn() -> D>);
 impl<D> DecisionHandler<D> where D: SerType {
     fn safe_node(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
         
-        
-        todo!("Implement this according to our tree")
+        true
     }
 
     fn latest_qc(&self) -> Option<QC> {
-        todo!("Implement this according to our tree")
+        None
     }
 }
 
@@ -121,7 +120,7 @@ impl<D> DecisionNode<D> {
                 false
             }
         } else {
-            false
+            true
         }
     }
 }
