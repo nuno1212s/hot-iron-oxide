@@ -1,38 +1,37 @@
-use std::marker::PhantomData;
 use crate::crypto::QuorumInfo;
 use crate::messages::serialize::HotIronOxSer;
 use crate::view::View;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::serialization_helper::SerType;
+use atlas_common::serialization_helper::SerMsg;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::{
-    DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OrderProtocolTolerance,
+    DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OrderProtocolTolerance,
     OrderingProtocol, OrderingProtocolArgs, ProtocolMessage, ShareableConsensusMessage,
 };
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 pub mod crypto;
 pub mod decisions;
 pub mod messages;
-mod request_provider;
 pub mod view;
+mod loggable_protocol;
 
 lazy_static! {
     static ref MOD_NAME: Arc<str> = Arc::from("HOT-IRON");
 }
 
-pub struct HotStuff<RQ, NT, CR> {
+pub struct HotIron<RQ, NT, CR> {
     node_id: NodeId,
     current_view: View,
     network_node: Arc<NT>,
     quorum_information: CR,
     phantom: PhantomData<RQ>,
 }
-
 
 pub(crate) fn get_n_for_f(f: usize) -> usize {
     3 * f + 1
@@ -46,7 +45,7 @@ pub(crate) fn get_f_for_n(n: usize) -> usize {
     (n - 1) / 3
 }
 
-impl<D, NT, CR> OrderProtocolTolerance for HotStuff<D, NT, CR> {
+impl<D, NT, CR> OrderProtocolTolerance for HotIron<D, NT, CR> {
     fn get_n_for_f(f: usize) -> usize {
         get_n_for_f(f)
     }
@@ -60,15 +59,15 @@ impl<D, NT, CR> OrderProtocolTolerance for HotStuff<D, NT, CR> {
     }
 }
 
-impl<D, NT, CR> Orderable for HotStuff<D, NT, CR> {
+impl<D, NT, CR> Orderable for HotIron<D, NT, CR> {
     fn sequence_number(&self) -> SeqNo {
         self.current_view.sequence_number()
     }
 }
 
-impl<D, NT, CR> TimeoutableMod<OPExResult<D, HotIronOxSer<D>>> for HotStuff<D, NT, CR>
+impl<D, NT, CR> TimeoutableMod<OPExResult<D, HotIronOxSer<D>>> for HotIron<D, NT, CR>
 where
-    D: SerType,
+    D: SerMsg,
 {
     fn mod_name() -> Arc<str> {
         MOD_NAME.clone()
@@ -82,14 +81,22 @@ where
     }
 }
 
-type HotIronResult<D> =
-    OPExecResult<DecisionMetadata<D, HotIronOxSer<D>>, ProtocolMessage<D, HotIronOxSer<D>>, D>;
-type HotIronPollResult<D> =
-    OPPollResult<DecisionMetadata<D, HotIronOxSer<D>>, ProtocolMessage<D, HotIronOxSer<D>>, D>;
+type HotIronResult<D> = OPExecResult<
+    DecisionMetadata<D, HotIronOxSer<D>>,
+    DecisionAD<D, HotIronOxSer<D>>,
+    ProtocolMessage<D, HotIronOxSer<D>>,
+    D,
+>;
+type HotIronPollResult<D> = OPPollResult<
+    DecisionMetadata<D, HotIronOxSer<D>>,
+    DecisionAD<D, HotIronOxSer<D>>,
+    ProtocolMessage<D, HotIronOxSer<D>>,
+    D,
+>;
 
-impl<RQ, NT, CR> OrderingProtocol<RQ> for HotStuff<RQ, NT, CR>
+impl<RQ, NT, CR> OrderingProtocol<RQ> for HotIron<RQ, NT, CR>
 where
-    RQ: SerType,
+    RQ: SerMsg,
 {
     type Serialization = HotIronOxSer<RQ>;
     type Config = ();
@@ -121,9 +128,9 @@ where
     }
 }
 
-impl<NT, RQ, RP, CR> NetworkedOrderProtocolInitializer<RQ, RP, NT> for HotStuff<RQ, NT, CR>
+impl<NT, RQ, RP, CR> NetworkedOrderProtocolInitializer<RQ, RP, NT> for HotIron<RQ, NT, CR>
 where
-    RQ: SerType,
+    RQ: SerMsg,
 {
     fn initialize(
         config: Self::Config,

@@ -15,7 +15,7 @@ use crate::messages::{
 use crate::view::View;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::serialization_helper::SerType;
+use atlas_common::serialization_helper::SerMsg;
 use atlas_common::{quiet_unwrap, threadpool};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
@@ -63,6 +63,7 @@ pub enum DecisionResult<D> {
     MessageIgnored,
     MessageQueued,
     DecisionProgressed(ShareableMessage<HotFeOxMsg<D>>),
+    
     PrepareQC(QC, ShareableMessage<HotFeOxMsg<D>>),
     LockedQC(QC, ShareableMessage<HotFeOxMsg<D>>),
     CommitQC(QC, ShareableMessage<HotFeOxMsg<D>>),
@@ -71,7 +72,7 @@ pub enum DecisionResult<D> {
 
 impl<RQ> HSDecision<RQ>
 where
-    RQ: SerType,
+    RQ: SerMsg,
 {
     pub fn new(view: View, node_id: NodeId) -> Self {
         let msg_decision_log = if view.primary() == node_id {

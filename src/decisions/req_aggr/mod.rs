@@ -1,5 +1,5 @@
 use atlas_common::channel::RecvError;
-use atlas_common::serialization_helper::SerType;
+use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::{RequestMessage, StoredRequestMessage};
 use atlas_core::request_pre_processing::{BatchOutput};
 use std::sync::{Arc, Mutex};
@@ -24,7 +24,7 @@ pub struct RequestAggr<RQ> {
 impl<RQ> RequestAggr<RQ> {
     pub fn new(pre_processor_output: BatchOutput<RequestMessage<RQ>>) -> Arc<Self>
     where
-        RQ: SerType,
+        RQ: SerMsg,
     {
         let arc = Arc::new(Self {
             pre_processor_output,

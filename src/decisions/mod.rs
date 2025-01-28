@@ -8,7 +8,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::messages::StoredRequestMessage;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
-use atlas_common::serialization_helper::SerType;
+use atlas_common::serialization_helper::SerMsg;
 use crate::view::View;
 
 pub(crate) mod decision;
@@ -42,7 +42,8 @@ pub struct DecisionTree {}
 
 pub struct DecisionHandler<D>(PhantomData<fn() -> D>);
 
-impl<D> DecisionHandler<D> where D: SerType {
+impl<D> DecisionHandler<D> where D: SerMsg
+{
     fn safe_node(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
         
         true

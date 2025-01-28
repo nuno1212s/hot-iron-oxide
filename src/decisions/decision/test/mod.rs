@@ -26,7 +26,7 @@ mod decision_test {
     use atlas_common::node_id::{NodeId, NodeType};
     use atlas_common::ordering::{Orderable, SeqNo};
     use atlas_common::peer_addr::PeerAddr;
-    use atlas_common::serialization_helper::SerType;
+    use atlas_common::serialization_helper::SerMsg;
     use atlas_common::{InitConfig, InitGuard};
     use atlas_communication::lookup_table::MessageModule;
     use atlas_communication::message::{
@@ -232,7 +232,7 @@ mod decision_test {
 
     impl<RQ> OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> for NetworkNode
     where
-        RQ: SerType,
+        RQ: SerMsg,
     {
         type NetworkInfoProvider = MockNetworkInfo;
 
@@ -310,7 +310,7 @@ mod decision_test {
 
     fn setup_decision<D>(seq_no: Option<SeqNo>, node_id: Option<NodeId>) -> HSDecision<D>
     where
-        D: SerType,
+        D: SerMsg,
     {
         const NODE_COUNT: u32 = 4;
 
@@ -328,7 +328,7 @@ mod decision_test {
         mock_info_factory: &MockNetworkInfoFactory,
     ) -> Arc<NetworkNode>
     where
-        RQ: SerType,
+        RQ: SerMsg,
     {
         let info = Arc::new(mock_info_factory.generate_network_info_for(node).unwrap());
 

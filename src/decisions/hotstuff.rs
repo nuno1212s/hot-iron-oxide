@@ -6,7 +6,7 @@ use crate::messages::serialize::HotIronOxSer;
 use crate::messages::HotFeOxMsg;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo};
-use atlas_common::serialization_helper::SerType;
+use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::RequestMessage;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{Decision, ProtocolConsensusDecision, ShareableMessage};
@@ -36,7 +36,7 @@ pub enum ConsensusPollStatus<RQ> {
     Recv,
     NextMessage(ShareableMessage<HotFeOxMsg<RQ>>),
     Decided(
-        MaybeVec<atlas_core::ordering_protocol::Decision<DecisionNodeHeader, HotFeOxMsg<RQ>, RQ>>,
+        MaybeVec<Decision<DecisionNodeHeader, (), HotFeOxMsg<RQ>, RQ>>,
     ),
 }
 
@@ -45,13 +45,13 @@ pub enum ConsensusStatus<RQ> {
     MessageQueued,
     //TODO
     Decided(
-        MaybeVec<atlas_core::ordering_protocol::Decision<DecisionNodeHeader, HotFeOxMsg<RQ>, RQ>>,
+        MaybeVec<Decision<DecisionNodeHeader, (), HotFeOxMsg<RQ>, RQ>>,
     ),
 }
 
 pub(crate) struct HotStuffProtocol<RQ, RP, NT>
 where
-    RQ: SerType,
+    RQ: SerMsg,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
 {
     node_id: NodeId,
@@ -77,7 +77,7 @@ where
 
 impl<RQ, RP, NT> HotStuffProtocol<RQ, RP, NT>
 where
-    RQ: SerType,
+    RQ: SerMsg,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
 {
     pub fn new(

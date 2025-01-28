@@ -1,14 +1,17 @@
 pub mod leader_allocation;
 
+#[cfg(feature = "serialize_serde")]
+use serde::{Deserialize, Serialize};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::OrderProtocolTolerance;
-use crate::HotStuff;
+use crate::HotIron;
 use crate::view::leader_allocation::LeaderAllocator;
 
 /// A view struct, containing a view of the current quorym
-#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct View {
     seq: SeqNo,
     members: Vec<NodeId>,
