@@ -48,6 +48,7 @@ pub struct VoteStore {
     decision_nodes: HashMap<DecisionNodeHeader, HashMap<NodeId, PartialSignature>>,
 }
 
+#[derive(Default)]
 pub struct NewViewStore {
     new_view: HashMap<Option<QC>, HashMap<NodeId, PartialSignature>>,
 }
@@ -132,6 +133,10 @@ impl<D> DecisionLog<D> {
             current_proposal: Default::default(),
             decision_log_type,
         }
+    }
+    
+    pub fn into_current_proposal(self) -> Option<DecisionNode<D>> {
+        self.current_proposal
     }
     
     pub fn as_replica(&self) -> &ReplicaDecisionLog {
@@ -233,12 +238,17 @@ impl MsgLeaderDecisionLog {
 
         match vote {
             VoteType::NewView(_) => Err(VoteAcceptError::NewViewVoteNotAcceptable),
-            VoteType::PrepareVote(vote) => Ok(self.prepare_qc.accept_vote(sender, vote, signature)),
+            VoteType::PrepareVote(vote) => {
+                self.prepare_qc.accept_vote(sender, vote, signature);
+                Ok(())
+            },
             VoteType::PreCommitVote(vote) => {
-                Ok(self.pre_commit_qc.accept_vote(sender, vote, signature))
+                self.pre_commit_qc.accept_vote(sender, vote, signature);
+                Ok(())
             }
             VoteType::CommitVote(commit_vote) => {
-                Ok(self.commit_qc.accept_vote(sender, commit_vote, signature))
+                self.commit_qc.accept_vote(sender, commit_vote, signature);
+                Ok(())
             }
         }
     }
@@ -354,14 +364,6 @@ impl NewViewStore {
                 *decision_node_header,
                 combined_signature,
             ))
-        }
-    }
-}
-
-impl Default for NewViewStore {
-    fn default() -> Self {
-        Self {
-            new_view: HashMap::default(),
         }
     }
 }

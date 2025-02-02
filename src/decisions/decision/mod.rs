@@ -6,7 +6,7 @@ use crate::decisions::log::{
     VoteAcceptError, VoteStoreError,
 };
 use crate::decisions::msg_queue::HotStuffTBOQueue;
-use crate::decisions::req_aggr::{ReqAggregator, RequestAggr};
+use crate::decisions::req_aggr::ReqAggregator;
 use crate::decisions::{DecisionHandler, DecisionNode, QCType, QC};
 use crate::messages::serialize::HotIronOxSer;
 use crate::messages::{
@@ -17,9 +17,10 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_common::{quiet_unwrap, threadpool};
+use atlas_core::messages::{ClientRqInfo, SessionBased};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
-use atlas_core::ordering_protocol::ShareableMessage;
+use atlas_core::ordering_protocol::{BatchedDecision, ProtocolConsensusDecision, ShareableMessage};
 use getset::{Getters, Setters};
 use std::error::Error;
 use std::sync::Arc;
@@ -62,12 +63,8 @@ pub enum DecisionResult<D> {
     DuplicateVote(NodeId),
     MessageIgnored,
     MessageQueued,
-    DecisionProgressed(ShareableMessage<HotFeOxMsg<D>>),
-    
-    PrepareQC(QC, ShareableMessage<HotFeOxMsg<D>>),
-    LockedQC(QC, ShareableMessage<HotFeOxMsg<D>>),
-    CommitQC(QC, ShareableMessage<HotFeOxMsg<D>>),
-    Decided(ShareableMessage<HotFeOxMsg<D>>),
+    DecisionProgressed(Option<QC>, ShareableMessage<HotFeOxMsg<D>>),
+    Decided(Option<QC>, ShareableMessage<HotFeOxMsg<D>>),
 }
 
 impl<RQ> HSDecision<RQ>
@@ -244,12 +241,9 @@ where
                             }
                         }
                     }
-                    HotFeOxMsgType::Proposal(_) => {
-                        // Leaders create the proposals, they never receive them, so
-                        // All proposal messages are dropped
-                        return Ok(DecisionResult::MessageIgnored);
-                    }
                     _ => {
+                        // Leaders create the proposals, they never receive them, so
+                        // All proposal messages are dropped or
                         // The received message does not match our sequence number
 
                         return Ok(DecisionResult::MessageIgnored);
@@ -282,7 +276,7 @@ where
                         .create_new_qc::<_, CP>(&**crypto, &node.decision_header())?;
 
                     let msg = HotFeOxMsgType::Proposal(ProposalMessage::new(
-                        ProposalType::Prepare(node, new_qc),
+                        ProposalType::Prepare(node, new_qc.clone()),
                     ));
 
                     let _ = network.broadcast(
@@ -291,9 +285,11 @@ where
                     );
 
                     self.current_state = DecisionState::PreCommit(0);
-                }
 
-                Ok(DecisionResult::DecisionProgressed(message))
+                    Ok(DecisionResult::DecisionProgressed(Some(new_qc), message))
+                } else {
+                    Ok(DecisionResult::DecisionProgressed(None, message))
+                }
             }
             DecisionState::Prepare(_) => {
                 let (node, qc) = match message.message().clone().into() {
@@ -310,7 +306,7 @@ where
                             }
                         }
                     }
-                    HotFeOxMsgType::Vote(_) | HotFeOxMsgType::Proposal(_) => {
+                    _ => {
                         // A non leader can never receive vote messages, they can only receive
                         // Proposals which they can vote on
 
@@ -353,7 +349,7 @@ where
 
                     self.current_state = DecisionState::PreCommit(0);
 
-                    Ok(DecisionResult::DecisionProgressed(message))
+                    Ok(DecisionResult::DecisionProgressed(None, message))
                 } else {
                     Ok(DecisionResult::MessageIgnored)
                 }
@@ -372,11 +368,8 @@ where
                             }
                         }
                     }
-                    HotFeOxMsgType::Proposal(_) => {
-                        // Leaders do not receive proposals
-                        return Ok(DecisionResult::MessageIgnored);
-                    }
                     _ => {
+                        // Leaders do not receive proposals
                         return Ok(DecisionResult::MessageIgnored);
                     }
                 };
@@ -415,9 +408,9 @@ where
 
                     self.current_state = DecisionState::Commit(0);
 
-                    Ok(DecisionResult::PrepareQC(created_qc, message))
+                    Ok(DecisionResult::DecisionProgressed(Some(created_qc), message))
                 } else {
-                    Ok(DecisionResult::DecisionProgressed(message))
+                    Ok(DecisionResult::DecisionProgressed(None, message))
                 }
             }
             DecisionState::PreCommit(_) => {
@@ -473,7 +466,7 @@ where
 
                 self.current_state = DecisionState::Commit(0);
 
-                Ok(DecisionResult::PrepareQC(qc, message))
+                Ok(DecisionResult::DecisionProgressed(Some(qc), message))
             }
             DecisionState::Commit(received) if is_leader => {
                 let vote_msg = match message.message().message() {
@@ -492,11 +485,8 @@ where
                             }
                         }
                     }
-                    HotFeOxMsgType::Proposal(_) => {
-                        // Leaders do not receive proposals
-                        return Ok(DecisionResult::MessageIgnored);
-                    }
                     _ => {
+                        // Leaders do not receive proposals
                         return Ok(DecisionResult::MessageIgnored);
                     }
                 };
@@ -544,9 +534,9 @@ where
 
                     self.current_state = DecisionState::Decide(0);
 
-                    Ok(DecisionResult::LockedQC(created_qc, message))
+                    Ok(DecisionResult::DecisionProgressed(Some(created_qc), message))
                 } else {
-                    Ok(DecisionResult::DecisionProgressed(message))
+                    Ok(DecisionResult::DecisionProgressed(None, message))
                 }
             }
             DecisionState::Commit(_) => {
@@ -600,7 +590,7 @@ where
 
                 self.current_state = DecisionState::Decide(0);
 
-                Ok(DecisionResult::CommitQC(qc, message))
+                Ok(DecisionResult::DecisionProgressed(Some(qc), message))
             }
             DecisionState::Decide(received) if is_leader => {
                 let vote_msg = match message.message().message() {
@@ -670,7 +660,7 @@ where
 
                     Ok(DecisionResult::Decided(message))
                 } else {
-                    Ok(DecisionResult::DecisionProgressed(message))
+                    Ok(DecisionResult::DecisionProgressed(None, message))
                 }
             }
             DecisionState::Decide(_) => {
@@ -695,6 +685,41 @@ where
             }
             DecisionState::Finally => Ok(DecisionResult::MessageIgnored),
         }
+    }
+
+    pub fn finalize_decision(self) -> ProtocolConsensusDecision<RQ>
+    where
+        RQ: SerMsg + SessionBased,
+    {
+        let seq = self.sequence_number();
+
+        let decision_node = self
+            .decision_log
+            .into_current_proposal()
+            .expect("Terminated a decision without an associated decision node");
+
+        let (header, client_commands) = decision_node.into();
+
+        let client_rq_infos = client_commands
+            .iter()
+            .map(|cmd| {
+                ClientRqInfo::new(
+                    *cmd.header().digest(),
+                    cmd.header().from(),
+                    cmd.message().sequence_number(),
+                    cmd.message().session_number(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let batch_decision = BatchedDecision::new(seq, client_commands, None);
+
+        ProtocolConsensusDecision::new(
+            seq,
+            batch_decision,
+            client_rq_infos,
+            header.current_block_digest,
+        )
     }
 }
 

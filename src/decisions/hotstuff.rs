@@ -1,15 +1,20 @@
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
-use crate::decisions::decision::{DecisionError, DecisionPollResult, HSDecision};
+use crate::decisions::decision::{DecisionError, DecisionPollResult, DecisionResult, HSDecision};
 use crate::decisions::req_aggr::RequestAggr;
-use crate::decisions::{DecisionHandler, DecisionNodeHeader};
+use crate::decisions::{DecisionHandler, DecisionNodeHeader, QC};
 use crate::messages::serialize::HotIronOxSer;
 use crate::messages::HotFeOxMsg;
+use crate::view::leader_allocation::RoundRobinLA;
+use crate::{HotIronDecision, HotIronPollResult, HotIronResult};
 use atlas_common::maybe_vec::MaybeVec;
+use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
-use atlas_core::messages::RequestMessage;
+use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
-use atlas_core::ordering_protocol::{Decision, ProtocolConsensusDecision, ShareableMessage};
+use atlas_core::ordering_protocol::{
+    Decision, DecisionsAhead, ProtocolConsensusDecision, ShareableMessage,
+};
 use atlas_core::request_pre_processing::BatchOutput;
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use either::Either;
@@ -19,8 +24,6 @@ use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, instrument};
-use atlas_common::node_id::NodeId;
-use crate::view::leader_allocation::RoundRobinLA;
 
 /// A data structure to keep track of any consensus instances that have been signalled
 ///
@@ -32,30 +35,13 @@ pub struct Signals {
     signaled_seq_no: BinaryHeap<Reverse<SeqNo>>,
 }
 
-pub enum ConsensusPollStatus<RQ> {
-    Recv,
-    NextMessage(ShareableMessage<HotFeOxMsg<RQ>>),
-    Decided(
-        MaybeVec<Decision<DecisionNodeHeader, (), HotFeOxMsg<RQ>, RQ>>,
-    ),
-}
-
-pub enum ConsensusStatus<RQ> {
-    MessageIgnored,
-    MessageQueued,
-    //TODO
-    Decided(
-        MaybeVec<Decision<DecisionNodeHeader, (), HotFeOxMsg<RQ>, RQ>>,
-    ),
-}
-
 pub(crate) struct HotStuffProtocol<RQ, RP, NT>
 where
     RQ: SerMsg,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
 {
     node_id: NodeId,
-    
+
     /// The decision store
     decisions: VecDeque<HSDecision<RQ>>,
 
@@ -84,7 +70,7 @@ where
         timeouts: TimeoutModHandle,
         node: Arc<NT>,
         request_pre_processor: RP,
-        batch_output: BatchOutput<RequestMessage<RQ>>,
+        batch_output: BatchOutput<RQ>,
     ) -> Result<Self, ()> {
         let rq_aggr = RequestAggr::new(batch_output);
 
@@ -148,27 +134,31 @@ where
     }
 
     #[instrument(skip_all)]
-    pub fn poll<CR, CP>(&mut self, crypto: &Arc<CR>) -> ConsensusPollStatus<RQ>
+    pub fn poll<CR, CP>(&mut self, crypto: &Arc<CR>) -> HotIronPollResult<RQ>
     where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
+        RQ: SerMsg + SessionBased,
     {
         while let Some(seq) = self.signal_queue.pop_signalled() {
             match seq.index(self.current_seq_no) {
                 Either::Right(index) => {
-                    let poll_result =
-                        self.decisions[index].poll::<_, _, CP>(&self.node, &self.decision_handler, crypto);
+                    let poll_result = self.decisions[index].poll::<_, _, CP>(
+                        &self.node,
+                        &self.decision_handler,
+                        crypto,
+                    );
 
                     match poll_result {
                         DecisionPollResult::NextMessage(message) => {
                             self.signal_queue.push_signalled(seq);
 
-                            return ConsensusPollStatus::NextMessage(message);
+                            return HotIronPollResult::Exec(message);
                         }
                         DecisionPollResult::TryPropose => {
                             self.signal_queue.push_signalled(seq);
 
-                            return ConsensusPollStatus::Recv;
+                            return HotIronPollResult::ReceiveMsg;
                         }
                         DecisionPollResult::Decided => {}
                         _ => {}
@@ -182,27 +172,28 @@ where
                 }
             }
         }
-        
+
         let mut to_finalize = Vec::new();
-        
+
         while self.can_finalize() {
             let decision = self.pop_front_decision();
 
-            /*let protocol_decision = ProtocolConsensusDecision::new(decision.sequence_number(),
-                                                                   /* executable_batch */, /* std::vec::Vec<atlas_core::messages::ClientRqInfo> */, /* atlas_common::crypto::hash::Digest */);
-            
-            let completed = Decision::completed_decision(decision.sequence_number(), protocol_decision);
-            
-            to_finalize.push(completed);*/
-        }
-        
-        if !to_finalize.is_empty() {
-            
-            
-            return ConsensusPollStatus::Decided(MaybeVec::from_many(to_finalize));
+            let decision_result = decision.finalize_decision();
+
+            to_finalize.push(HotIronDecision::completed_decision(
+                decision_result.sequence_number(),
+                decision_result,
+            ));
         }
 
-        ConsensusPollStatus::Recv
+        if !to_finalize.is_empty() {
+            return HotIronPollResult::ProgressedDecision(
+                DecisionsAhead::Ignore,
+                MaybeVec::from_many(to_finalize),
+            );
+        }
+
+        HotIronPollResult::ReceiveMsg
     }
 
     #[instrument(skip_all)]
@@ -210,7 +201,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         crypto: &Arc<CR>,
-    ) -> Result<ConsensusStatus<RQ>, ProcessMessageErr<CP::CombinationError>>
+    ) -> Result<HotIronResult<RQ>, ProcessMessageErr<CP::CombinationError>>
     where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
@@ -223,14 +214,14 @@ where
                 debug!("Ignoring consensus message {:?} received from {:?} as we are already in seq no {:?}",
                     message, message.header().from(), self.current_seq_no);
 
-                return Ok(ConsensusStatus::MessageIgnored);
+                return Ok(HotIronResult::MessageDropped);
             }
         };
 
         if index >= self.decisions.len() {
             self.queue(message);
 
-            Ok(ConsensusStatus::MessageQueued)
+            Ok(HotIronResult::MessageQueued)
         } else {
             let decision = self.decisions.get_mut(index).unwrap();
 
@@ -238,32 +229,63 @@ where
                 message,
                 &self.node,
                 &self.decision_handler,
-                &crypto,
+                crypto,
                 &self.request_aggr,
             )?;
 
-            todo!()
+            Ok(match decision_result {
+                DecisionResult::DuplicateVote(_) => HotIronResult::MessageDropped,
+                DecisionResult::MessageIgnored => HotIronResult::MessageDropped,
+                DecisionResult::MessageQueued => HotIronResult::MessageQueued,
+                DecisionResult::DecisionProgressed(qc, message) => {
+                    
+                    let decisions = if let Some(qc) = qc {
+                        HotIronDecision::partial_decision_info(decision.sequence_number(), MaybeVec::from_one(qc), MaybeVec::from_one(message))
+                    } else {
+                        HotIronDecision::decision_info_from_message(decision.sequence_number(), message)
+                    };
+                    
+                    HotIronResult::ProgressedDecision(DecisionsAhead::Ignore, MaybeVec::from_one(decisions))
+                },
+                DecisionResult::Decided(qc, message) => {
+                    
+                    let decision = if let Some(qc) = qc {
+                        HotIronDecision::partial_decision_info(decision.sequence_number(), MaybeVec::from_one(qc), MaybeVec::from_one(message))
+                    } else {
+                        HotIronDecision::decision_info_from_message(decision.sequence_number(), message)
+                    };
+
+                    HotIronResult::ProgressedDecision(DecisionsAhead::Ignore, MaybeVec::from_one(decision))
+                }
+            })
         }
     }
-    
+
     fn next_seq_no(&mut self) -> SeqNo {
         self.current_seq_no = self.current_seq_no.next();
-        
+
         self.current_seq_no
     }
-    
+
     fn pop_front_decision(&mut self) -> HSDecision<RQ> {
-        let popped_decision = self.decisions.pop_front().expect("Cannot have empty decision queue");
-        
+        let popped_decision = self
+            .decisions
+            .pop_front()
+            .expect("Cannot have empty decision queue");
+
         let no = self.next_seq_no();
 
         let next_view = popped_decision.view().with_new_seq::<RoundRobinLA>(no);
 
         let decision = HSDecision::new(next_view, self.node_id);
-        
+
         self.decisions.push_back(decision);
-        
+
         popped_decision
+    }
+    
+    pub fn finalize_decision(&mut self, seq_no: SeqNo) {
+        
     }
 }
 

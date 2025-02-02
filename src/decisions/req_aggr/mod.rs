@@ -1,28 +1,28 @@
 use atlas_common::channel::RecvError;
+use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::serialization_helper::SerMsg;
+use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::messages::{RequestMessage, StoredRequestMessage};
-use atlas_core::request_pre_processing::{BatchOutput};
+use atlas_core::request_pre_processing::BatchOutput;
 use std::sync::{Arc, Mutex};
 use tracing::error;
-use atlas_common::crypto::hash::{Context, Digest};
-use atlas_communication::message::Header;
 
 ///
 /// The aggregator for requests
 /// 
 pub trait ReqAggregator<RQ>: Send + Sync {
     
-    fn take_pool_requests(&self) -> (Vec<StoredRequestMessage<RQ>>, Digest);
+    fn take_pool_requests(&self) -> (Vec<StoredMessage<RQ>>, Digest);
     
 }
 
 pub struct RequestAggr<RQ> {
-    pre_processor_output: BatchOutput<RequestMessage<RQ>>,
-    current_pool: Mutex<(Vec<StoredRequestMessage<RQ>>, Digest)>,
+    pre_processor_output: BatchOutput<RQ>,
+    current_pool: Mutex<(Vec<StoredMessage<RQ>>, Digest)>,
 }
 
 impl<RQ> RequestAggr<RQ> {
-    pub fn new(pre_processor_output: BatchOutput<RequestMessage<RQ>>) -> Arc<Self>
+    pub fn new(pre_processor_output: BatchOutput<RQ>) -> Arc<Self>
     where
         RQ: SerMsg,
     {
@@ -73,9 +73,9 @@ impl<RQ> RequestAggr<RQ> {
         }
     }
 
-    fn calculate_digest_for(stored: &[StoredRequestMessage<RQ>]) -> Digest {
+    fn calculate_digest_for(stored: &[StoredMessage<RQ>]) -> Digest {
         let digest = stored.iter()
-            .map(StoredRequestMessage::header)
+            .map(StoredMessage::header)
             .map(Header::digest)
             .fold(Context::new(), |mut context, digest| {
                 context.update(digest.as_ref());
@@ -88,7 +88,7 @@ impl<RQ> RequestAggr<RQ> {
 }
 
 impl<RQ> ReqAggregator<RQ> for RequestAggr<RQ> where RQ: Send + Sync {
-    fn take_pool_requests(&self) -> (Vec<StoredRequestMessage<RQ>>, Digest) {
+    fn take_pool_requests(&self) -> (Vec<StoredMessage<RQ>>, Digest) {
         let mut guard = self.current_pool.lock().unwrap();
 
         std::mem::take(&mut guard)

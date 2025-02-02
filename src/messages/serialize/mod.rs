@@ -1,14 +1,13 @@
-use atlas_common::serialization_helper::SerMsg;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
+use crate::decisions::{DecisionNodeHeader, QC};
+use crate::messages::{HotFeOxMsg, HotFeOxMsgType, VoteType};
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::{Buf, Header};
 use atlas_communication::reconfiguration::NetworkInformationProvider;
-use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, OrderProtocolVerificationHelper};
-use crate::crypto::get_partial_signature_for_message;
-use crate::decisions::DecisionNodeHeader;
-use crate::messages::{HotFeOxMsg, HotFeOxMsgType, VoteType};
+use atlas_core::ordering_protocol::networking::serialize::{OrderProtocolVerificationHelper, OrderingProtocolMessage};
+use serde::Serialize;
+use std::marker::PhantomData;
+use std::sync::Arc;
 
 pub struct HotIronOxSer<RQ>(PhantomData<fn() -> RQ>);
 
@@ -17,7 +16,7 @@ where RQ: SerMsg
 {
     type ProtocolMessage = HotFeOxMsg<RQ>;
     type DecisionMetadata = DecisionNodeHeader;
-    type DecisionAdditionalInfo = ();
+    type DecisionAdditionalInfo = QC;
 
     fn internally_verify_message<NI, OPVH>(network_info: &Arc<NI>, header: &Header, message: &Self::ProtocolMessage) -> atlas_common::error::Result<()>
         where NI: NetworkInformationProvider,
@@ -41,7 +40,6 @@ where RQ: SerMsg
 struct VoteMessage<'a> {
     view_seq: SeqNo,
     vote_type: &'a VoteType
-    
 }
 
 pub fn serialize_vote_message(view_seq: SeqNo, vote_type: &VoteType) -> Buf {

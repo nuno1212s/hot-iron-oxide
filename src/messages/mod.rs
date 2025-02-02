@@ -1,13 +1,12 @@
 pub mod serialize;
 
-use std::fmt::Debug;
-#[cfg(feature = "serialize_serde")]
-use serde::{Serialize, Deserialize};
-use getset::Getters;
-use atlas_common::crypto::threshold_crypto::{PartialSignature, CombinedSignature};
-use atlas_common::ordering::{Orderable, SeqNo};
 use crate::decisions::{DecisionNode, DecisionNodeHeader, QC};
-
+use atlas_common::crypto::threshold_crypto::PartialSignature;
+use atlas_common::ordering::{Orderable, SeqNo};
+use getset::Getters;
+#[cfg(feature = "serialize_serde")]
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
@@ -81,9 +80,7 @@ impl<D> From<HotFeOxMsg<D>> for HotFeOxMsgType<D> {
 
 impl<D> ProposalMessage<D> {
     pub fn new(proposal_type: ProposalType<D>) -> Self {
-        Self {
-            proposal_type,
-        }
+        Self { proposal_type }
     }
 }
 
@@ -100,7 +97,7 @@ impl VoteMessage {
             signature: sig,
         }
     }
-    
+
     pub(crate) fn into_inner(self) -> (VoteType, PartialSignature) {
         (self.vote_type, self.signature)
     }
@@ -109,9 +106,7 @@ impl VoteMessage {
 impl From<VoteMessage> for DecisionNodeHeader {
     fn from(value: VoteMessage) -> Self {
         match value.vote_type {
-            VoteType::PrepareVote(dn) |
-            VoteType::PreCommitVote(dn) |
-            VoteType::CommitVote(dn) => {
+            VoteType::PrepareVote(dn) | VoteType::PreCommitVote(dn) | VoteType::CommitVote(dn) => {
                 dn
             }
             VoteType::NewView(_) => {
@@ -122,5 +117,7 @@ impl From<VoteMessage> for DecisionNodeHeader {
 }
 
 impl<D> Debug for HotFeOxMsg<D> {
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> { todo!() }
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        todo!()
+    }
 }

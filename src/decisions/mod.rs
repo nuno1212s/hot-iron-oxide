@@ -1,20 +1,21 @@
-use std::hash::Hash;
-use std::sync::Arc;
-use std::marker::PhantomData;
-use getset::{CopyGetters, Getters};
+use crate::view::View;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::StoredRequestMessage;
+use getset::{CopyGetters, Getters};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
-use atlas_common::serialization_helper::SerMsg;
-use crate::view::View;
+use std::hash::Hash;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use atlas_communication::message::StoredMessage;
 
 pub(crate) mod decision;
-mod msg_queue;
-mod log;
 mod hotstuff;
+mod log;
+mod msg_queue;
 pub(crate) mod req_aggr;
 
 /// The decision node header
@@ -25,7 +26,7 @@ pub struct DecisionNodeHeader {
     view_no: SeqNo,
     previous_block: Option<Digest>,
     current_block_digest: Digest,
-    contained_client_commands: usize
+    contained_client_commands: usize,
 }
 
 /// The decision nod
@@ -35,17 +36,18 @@ pub struct DecisionNode<D> {
     #[getset(get_copy = "pub")]
     decision_header: DecisionNodeHeader,
     #[getset(get = "pub")]
-    client_commands: Arc<[StoredRequestMessage<D>]>,
+    client_commands: Vec<StoredMessage<D>>,
 }
 
 pub struct DecisionTree {}
 
 pub struct DecisionHandler<D>(PhantomData<fn() -> D>);
 
-impl<D> DecisionHandler<D> where D: SerMsg
+impl<D> DecisionHandler<D>
+where
+    D: SerMsg,
 {
     fn safe_node(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
-        
         true
     }
 
@@ -56,7 +58,7 @@ impl<D> DecisionHandler<D> where D: SerMsg
 
 impl<D> Default for DecisionHandler<D> {
     fn default() -> Self {
-        Self (Default::default())
+        Self(Default::default())
     }
 }
 
@@ -67,7 +69,11 @@ impl Orderable for DecisionNodeHeader {
 }
 
 impl DecisionNodeHeader {
-    fn initialize_header_from_previous(digest: Digest, previous: &DecisionNodeHeader, contained_commands: usize) -> Self {
+    fn initialize_header_from_previous(
+        digest: Digest,
+        previous: &DecisionNodeHeader,
+        contained_commands: usize,
+    ) -> Self {
         Self {
             view_no: previous.sequence_number().next(),
             previous_block: Some(previous.current_block_digest.clone()),
@@ -93,17 +99,33 @@ impl<D> Orderable for DecisionNode<D> {
 }
 
 impl<D> DecisionNode<D> {
-    pub fn create_leaf(previous_node: &DecisionNodeHeader, digest: Digest, client_commands: Vec<StoredRequestMessage<D>>) -> Self {
+    pub fn create_leaf(
+        previous_node: &DecisionNodeHeader,
+        digest: Digest,
+        client_commands: Vec<StoredMessage<D>>,
+    ) -> Self {
         Self {
-            decision_header: DecisionNodeHeader::initialize_header_from_previous(digest, previous_node, client_commands.len()),
-            client_commands: Arc::<[StoredRequestMessage<D>]>::from(client_commands).into(),
+            decision_header: DecisionNodeHeader::initialize_header_from_previous(
+                digest,
+                previous_node,
+                client_commands.len(),
+            ),
+            client_commands,
         }
     }
 
-    pub fn create_root_leaf(view: &View, digest: Digest, client_commands: Vec<StoredRequestMessage<D>>) -> Self {
+    pub fn create_root_leaf(
+        view: &View,
+        digest: Digest,
+        client_commands: Vec<StoredMessage<D>>,
+    ) -> Self {
         Self {
-            decision_header: DecisionNodeHeader::initialize_root_node(view, digest, client_commands.len()),
-            client_commands: Arc::<[StoredRequestMessage<D>]>::from(client_commands).into(),
+            decision_header: DecisionNodeHeader::initialize_root_node(
+                view,
+                digest,
+                client_commands.len(),
+            ),
+            client_commands,
         }
     }
 
@@ -115,11 +137,7 @@ impl<D> DecisionNode<D> {
         let previous_node = self.decision_header.previous_block;
 
         if let Some(digest) = previous_node {
-            if digest == prev_node.current_block_digest {
-                true
-            } else {
-                false
-            }
+            digest == prev_node.current_block_digest
         } else {
             true
         }
@@ -142,10 +160,12 @@ pub struct QC {
 }
 
 impl QC {
-    pub fn new(qc_type: QCType,
-               view_seq: SeqNo,
-               decision_node: DecisionNodeHeader,
-               signature: CombinedSignature) -> Self {
+    pub fn new(
+        qc_type: QCType,
+        view_seq: SeqNo,
+        decision_node: DecisionNodeHeader,
+        signature: CombinedSignature,
+    ) -> Self {
         QC {
             qc_type,
             view_seq,
@@ -175,7 +195,10 @@ impl<D> Hash for DecisionNode<D> {
     }
 }
 
-impl<D> Clone for DecisionNode<D> {
+impl<D> Clone for DecisionNode<D>
+where
+    D: Clone,
+{
     fn clone(&self) -> Self {
         Self {
             decision_header: self.decision_header.clone(),
@@ -184,8 +207,14 @@ impl<D> Clone for DecisionNode<D> {
     }
 }
 
+impl<D> From<DecisionNode<D>> for (DecisionNodeHeader, Vec<StoredMessage<D>>) {
+    fn from(value: DecisionNode<D>) -> Self {
+        (value.decision_header, value.client_commands)
+    }
+}
+
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, PartialEq, Eq, Hash,Copy)]
+#[derive(Clone, PartialEq, Eq, Hash, Copy)]
 pub enum QCType {
     PrepareVote,
     PreCommitVote,
