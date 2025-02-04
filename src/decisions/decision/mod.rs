@@ -658,7 +658,7 @@ where
 
                     self.current_state = DecisionState::Finally;
 
-                    Ok(DecisionResult::Decided(message))
+                    Ok(DecisionResult::Decided(Some(created_qc), message))
                 } else {
                     Ok(DecisionResult::DecisionProgressed(None, message))
                 }
@@ -681,7 +681,7 @@ where
 
                 self.current_state = DecisionState::Finally;
 
-                Ok(DecisionResult::Decided(message))
+                Ok(DecisionResult::Decided(Some(qc), message))
             }
             DecisionState::Finally => Ok(DecisionResult::MessageIgnored),
         }

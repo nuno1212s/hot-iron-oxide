@@ -173,23 +173,10 @@ where
             }
         }
 
-        let mut to_finalize = Vec::new();
-
-        while self.can_finalize() {
-            let decision = self.pop_front_decision();
-
-            let decision_result = decision.finalize_decision();
-
-            to_finalize.push(HotIronDecision::completed_decision(
-                decision_result.sequence_number(),
-                decision_result,
-            ));
-        }
-
-        if !to_finalize.is_empty() {
+        if self.can_finalize() {
             return HotIronPollResult::ProgressedDecision(
                 DecisionsAhead::Ignore,
-                MaybeVec::from_many(to_finalize),
+                self.finalize_decisions(),
             );
         }
 
@@ -238,24 +225,42 @@ where
                 DecisionResult::MessageIgnored => HotIronResult::MessageDropped,
                 DecisionResult::MessageQueued => HotIronResult::MessageQueued,
                 DecisionResult::DecisionProgressed(qc, message) => {
-                    
                     let decisions = if let Some(qc) = qc {
-                        HotIronDecision::partial_decision_info(decision.sequence_number(), MaybeVec::from_one(qc), MaybeVec::from_one(message))
+                        HotIronDecision::partial_decision_info(
+                            decision.sequence_number(),
+                            MaybeVec::from_one(qc),
+                            MaybeVec::from_one(message),
+                        )
                     } else {
-                        HotIronDecision::decision_info_from_message(decision.sequence_number(), message)
-                    };
-                    
-                    HotIronResult::ProgressedDecision(DecisionsAhead::Ignore, MaybeVec::from_one(decisions))
-                },
-                DecisionResult::Decided(qc, message) => {
-                    
-                    let decision = if let Some(qc) = qc {
-                        HotIronDecision::partial_decision_info(decision.sequence_number(), MaybeVec::from_one(qc), MaybeVec::from_one(message))
-                    } else {
-                        HotIronDecision::decision_info_from_message(decision.sequence_number(), message)
+                        HotIronDecision::decision_info_from_message(
+                            decision.sequence_number(),
+                            message,
+                        )
                     };
 
-                    HotIronResult::ProgressedDecision(DecisionsAhead::Ignore, MaybeVec::from_one(decision))
+                    HotIronResult::ProgressedDecision(
+                        DecisionsAhead::Ignore,
+                        MaybeVec::from_one(decisions),
+                    )
+                }
+                DecisionResult::Decided(qc, message) => {
+                    let decision = if let Some(qc) = qc {
+                        HotIronDecision::partial_decision_info(
+                            decision.sequence_number(),
+                            MaybeVec::from_one(qc),
+                            MaybeVec::from_one(message),
+                        )
+                    } else {
+                        HotIronDecision::decision_info_from_message(
+                            decision.sequence_number(),
+                            message,
+                        )
+                    };
+
+                    HotIronResult::ProgressedDecision(
+                        DecisionsAhead::Ignore,
+                        MaybeVec::from_one(decision),
+                    )
                 }
             })
         }
@@ -283,9 +288,25 @@ where
 
         popped_decision
     }
-    
-    pub fn finalize_decision(&mut self, seq_no: SeqNo) {
-        
+
+    pub fn finalize_decisions(&mut self) -> MaybeVec<HotIronDecision<RQ>>
+    where
+        RQ: SerMsg + SessionBased,
+    {
+        let mut decisions = Vec::new();
+
+        while self.can_finalize() {
+            let decision = self.pop_front_decision();
+
+            let decision = decision.finalize_decision();
+
+            decisions.push(HotIronDecision::completed_decision(
+                decision.sequence_number(),
+                decision,
+            ));
+        }
+
+        MaybeVec::from_many(decisions)
     }
 }
 
