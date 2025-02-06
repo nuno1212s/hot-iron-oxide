@@ -13,7 +13,7 @@ use std::sync::Arc;
 use atlas_communication::message::StoredMessage;
 
 pub(crate) mod decision;
-mod hotstuff;
+pub(crate) mod hotstuff;
 mod log;
 mod msg_queue;
 pub(crate) mod req_aggr;

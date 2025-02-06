@@ -5,6 +5,7 @@ use crate::decisions::{DecisionHandler, DecisionNodeHeader, QC};
 use crate::messages::serialize::HotIronOxSer;
 use crate::messages::HotFeOxMsg;
 use crate::view::leader_allocation::RoundRobinLA;
+use crate::view::View;
 use crate::{HotIronDecision, HotIronPollResult, HotIronResult};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
@@ -21,6 +22,7 @@ use either::Either;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, VecDeque};
 use std::error::Error;
+use std::iter;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, instrument};
@@ -35,7 +37,7 @@ pub struct Signals {
     signaled_seq_no: BinaryHeap<Reverse<SeqNo>>,
 }
 
-pub(crate) struct HotStuffProtocol<RQ, RP, NT>
+pub(crate) struct HotStuffProtocol<RQ, NT>
 where
     RQ: SerMsg,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
@@ -44,8 +46,6 @@ where
 
     /// The decision store
     decisions: VecDeque<HSDecision<RQ>>,
-
-    request_pre_processor: RP,
 
     decision_handler: DecisionHandler<RQ>,
 
@@ -61,7 +61,7 @@ where
     timeouts: TimeoutModHandle,
 }
 
-impl<RQ, RP, NT> HotStuffProtocol<RQ, RP, NT>
+impl<RQ, NT> HotStuffProtocol<RQ, NT>
 where
     RQ: SerMsg,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
@@ -69,7 +69,6 @@ where
     pub fn new(
         timeouts: TimeoutModHandle,
         node: Arc<NT>,
-        request_pre_processor: RP,
         batch_output: BatchOutput<RQ>,
     ) -> Result<Self, ()> {
         let rq_aggr = RequestAggr::new(batch_output);
@@ -77,7 +76,6 @@ where
         Ok(Self {
             node_id: node.id(),
             decisions: Default::default(),
-            request_pre_processor,
             decision_handler: DecisionHandler::default(),
             request_aggr: rq_aggr,
             node,
@@ -87,8 +85,24 @@ where
         })
     }
 
-    pub fn install_seq_no(&mut self, seq_no: SeqNo) {
+    pub fn install_seq_no(&mut self, mut seq_no: SeqNo) {
         self.current_seq_no = seq_no;
+
+        let decision = self.decisions.pop_back().expect("Cannot have empty decision queue").view().clone();
+
+        let new_view = decision.with_new_seq::<RoundRobinLA>(seq_no);
+        
+        let decisions_to_pop = self.decisions.len();
+        
+        self.decisions.clear();
+        
+        for _ in 0..decisions_to_pop {
+            seq_no = seq_no.next();
+            
+            let new_view = new_view.with_new_seq::<RoundRobinLA>(seq_no);
+            
+            self.decisions.push_back(HSDecision::new(new_view, self.node_id));
+        }
     }
 
     fn index(&self, seq_no: &SeqNo) -> Either<InvalidSeqNo, usize> {
@@ -124,6 +138,7 @@ where
             );
 
             //TODO: Add message to the tbo queue
+            todo!("Add message to the tbo queue")
         } else {
             // Queue the message in the corresponding pending decision
             self.decisions.get_mut(i).unwrap().queue(message);
@@ -192,6 +207,7 @@ where
     where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
+        RQ: SerMsg + SessionBased,
     {
         let message_seq = message.message().sequence_number();
 
@@ -225,18 +241,8 @@ where
                 DecisionResult::MessageIgnored => HotIronResult::MessageDropped,
                 DecisionResult::MessageQueued => HotIronResult::MessageQueued,
                 DecisionResult::DecisionProgressed(qc, message) => {
-                    let decisions = if let Some(qc) = qc {
-                        HotIronDecision::partial_decision_info(
-                            decision.sequence_number(),
-                            MaybeVec::from_one(qc),
-                            MaybeVec::from_one(message),
-                        )
-                    } else {
-                        HotIronDecision::decision_info_from_message(
-                            decision.sequence_number(),
-                            message,
-                        )
-                    };
+                    let decisions =
+                        Self::turn_into_decision(decision.sequence_number(), qc, message);
 
                     HotIronResult::ProgressedDecision(
                         DecisionsAhead::Ignore,
@@ -244,23 +250,14 @@ where
                     )
                 }
                 DecisionResult::Decided(qc, message) => {
-                    let decision = if let Some(qc) = qc {
-                        HotIronDecision::partial_decision_info(
-                            decision.sequence_number(),
-                            MaybeVec::from_one(qc),
-                            MaybeVec::from_one(message),
-                        )
-                    } else {
-                        HotIronDecision::decision_info_from_message(
-                            decision.sequence_number(),
-                            message,
-                        )
-                    };
+                    let decision =
+                        Self::turn_into_decision(decision.sequence_number(), qc, message);
 
-                    HotIronResult::ProgressedDecision(
-                        DecisionsAhead::Ignore,
-                        MaybeVec::from_one(decision),
-                    )
+                    let decisions = self
+                        .finalize_decisions()
+                        .joining(MaybeVec::from_one(decision));
+
+                    HotIronResult::ProgressedDecision(DecisionsAhead::Ignore, decisions)
                 }
             })
         }
@@ -280,7 +277,11 @@ where
 
         let no = self.next_seq_no();
 
-        let next_view = popped_decision.view().with_new_seq::<RoundRobinLA>(no);
+        let next_view = self
+            .decisions
+            .back()
+            .map(|d| d.view().with_new_seq::<RoundRobinLA>(no))
+            .unwrap_or_else(|| popped_decision.view().with_new_seq::<RoundRobinLA>(no));
 
         let decision = HSDecision::new(next_view, self.node_id);
 
@@ -307,6 +308,22 @@ where
         }
 
         MaybeVec::from_many(decisions)
+    }
+
+    fn turn_into_decision(
+        seq: SeqNo,
+        qc: Option<QC>,
+        message: ShareableMessage<HotFeOxMsg<RQ>>,
+    ) -> HotIronDecision<RQ> {
+        if let Some(qc) = qc {
+            HotIronDecision::partial_decision_info(
+                seq,
+                MaybeVec::from_one(qc),
+                MaybeVec::from_one(message),
+            )
+        } else {
+            HotIronDecision::decision_info_from_message(seq, message)
+        }
     }
 }
 

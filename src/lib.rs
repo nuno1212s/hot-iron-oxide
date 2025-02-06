@@ -1,3 +1,5 @@
+use crate::crypto::{AtlasTHCryptoProvider, CryptoInformationProvider};
+use crate::decisions::hotstuff::HotStuffProtocol;
 use crate::decisions::{DecisionNodeHeader, QC};
 use crate::messages::serialize::HotIronOxSer;
 use crate::messages::HotFeOxMsg;
@@ -6,20 +8,27 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
+use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::networking::{
     NetworkedOrderProtocolInitializer, OrderProtocolSendNode,
 };
-use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, ProtocolMessage, ShareableConsensusMessage};
+use atlas_core::ordering_protocol::{
+    Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult,
+    OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, ProtocolMessage,
+    ShareableConsensusMessage,
+};
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use anyhow::anyhow;
 
 pub mod crypto;
 pub mod decisions;
 mod loggable_protocol;
 pub mod messages;
 pub mod view;
+mod config;
 
 lazy_static! {
     static ref MOD_NAME: Arc<str> = Arc::from("HOT-IRON");
@@ -35,7 +44,7 @@ where
     current_view: View,
     network_node: Arc<NT>,
     quorum_information: Arc<CR>,
-    phantom: PhantomData<RQ>,
+    hot_stuff_protocol: HotStuffProtocol<RQ, NT>,
 }
 
 type HotIronResult<RQ> = OPExecResult<
@@ -51,12 +60,7 @@ type HotIronPollResult<RQ> = OPPollResult<
     RQ,
 >;
 
-type HotIronDecision<RQ> = Decision<
-    DecisionNodeHeader,
-    QC,
-    HotFeOxMsg<RQ>,
-    RQ
->;
+type HotIronDecision<RQ> = Decision<DecisionNodeHeader, QC, HotFeOxMsg<RQ>, RQ>;
 
 pub(crate) fn get_n_for_f(f: usize) -> usize {
     3 * f + 1
@@ -102,7 +106,7 @@ where
 
 impl<RQ, NT, CR> TimeoutableMod<OPExResult<RQ, HotIronOxSer<RQ>>> for HotIron<RQ, NT, CR>
 where
-    RQ: SerMsg,    
+    RQ: SerMsg,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
     CR: Send + Sync,
 {
@@ -118,12 +122,11 @@ where
     }
 }
 
-
 impl<RQ, NT, CR> OrderingProtocol<RQ> for HotIron<RQ, NT, CR>
 where
-    RQ: SerMsg,
+    RQ: SerMsg + SessionBased,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
-    CR: Send + Sync,
+    CR: CryptoInformationProvider + Send + Sync,
 {
     type Serialization = HotIronOxSer<RQ>;
     type Config = ();
@@ -132,34 +135,40 @@ where
         &mut self,
         message: ShareableConsensusMessage<RQ, Self::Serialization>,
     ) {
-        todo!()
+        self.hot_stuff_protocol.queue(message);
     }
 
     fn handle_execution_changed(&mut self, is_executing: bool) -> Result<()> {
-        todo!()
+        // We don't really need anything here since our proposer design is different,
+        // We only propose when we have the necessary new view messages
+        Ok(())
     }
 
     fn poll(&mut self) -> Result<HotIronPollResult<RQ>> {
-        todo!()
+        Ok(self
+            .hot_stuff_protocol
+            .poll::<CR, AtlasTHCryptoProvider>(&self.quorum_information))
     }
 
     fn process_message(
         &mut self,
         message: ShareableConsensusMessage<RQ, Self::Serialization>,
     ) -> Result<HotIronResult<RQ>> {
-        todo!()
+        self.hot_stuff_protocol
+            .process_message::<CR, AtlasTHCryptoProvider>(message, &self.quorum_information)
+            .map_err(|e| e.into())
     }
 
     fn install_seq_no(&mut self, seq_no: SeqNo) -> Result<()> {
-        todo!()
+        Ok(self.hot_stuff_protocol.install_seq_no(seq_no))
     }
 }
 
 impl<NT, RQ, RP, CR> NetworkedOrderProtocolInitializer<RQ, RP, NT> for HotIron<RQ, NT, CR>
 where
-    RQ: SerMsg,
+    RQ: SerMsg + SessionBased,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
-    CR: Send + Sync,
+    CR: CryptoInformationProvider + Send + Sync,
 {
     fn initialize(
         config: Self::Config,
@@ -168,6 +177,20 @@ where
     where
         Self: Sized,
     {
-        todo!()
+        let OrderingProtocolArgs(node_id, timeout, rq, batch_output, node, quorum) =
+            ordering_protocol_args;
+
+        let hot_stuff_protocol = HotStuffProtocol::new(timeout, node.clone(), batch_output)
+            .map_err(|_| anyhow!("Error while initializing hot stuff protocol").into())?;
+
+        let view = View::new_from_quorum(SeqNo::ZERO, quorum);
+
+        Ok(HotIron {
+            node_id,
+            current_view: view,
+            network_node: node,
+            quorum_information: Arc::new(()),
+            hot_stuff_protocol,
+        })
     }
 }
