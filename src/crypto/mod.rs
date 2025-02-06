@@ -24,7 +24,7 @@ pub trait CryptoInformationProvider: Sync + Send + 'static {
 
     fn get_own_public_key(&self) -> &PublicKeyPart;
 
-    fn get_public_key_for_index(&self, index: usize) -> &PublicKeyPart;
+    fn get_public_key_for_index(&self, index: usize) -> PublicKeyPart;
 
     fn get_public_key_set(&self) -> &PublicKeySet;
 }
@@ -145,4 +145,22 @@ impl CryptoSignatureCombiner for AtlasTHCryptoProvider {
 pub enum CombinationError {
     #[error("Failed to combine partial signatures")]
     FailedToCombinePartialSignatures,
+}
+
+impl CryptoInformationProvider for QuorumInfo {
+    fn get_own_private_key(&self) -> &PrivateKeyPart {
+        &self.our_priv_key
+    }
+
+    fn get_own_public_key(&self) -> &PublicKeyPart {
+        &self.our_pub_key
+    }
+
+    fn get_public_key_for_index(&self, index: usize) -> PublicKeyPart {
+        self.pub_key.public_key_share(index)
+    }
+
+    fn get_public_key_set(&self) -> &PublicKeySet {
+        &self.pub_key
+    }
 }

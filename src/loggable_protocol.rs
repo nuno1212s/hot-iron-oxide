@@ -1,8 +1,10 @@
+use crate::crypto::CryptoInformationProvider;
 use crate::messages::serialize::HotIronOxSer;
 use crate::HotIron;
 use crate::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
+use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{
     DecomposedProof, LoggableOrderProtocol, OrderProtocolLogHelper, PProof,
@@ -12,16 +14,16 @@ use atlas_core::ordering_protocol::networking::serialize::{
 };
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{
-    DecisionAD, DecisionMetadata, OrderingProtocol, ProtocolConsensusDecision, ProtocolMessage,
+    DecisionAD, DecisionMetadata, ProtocolConsensusDecision, ProtocolMessage,
     ShareableConsensusMessage,
 };
 use std::sync::Arc;
 
 impl<RQ, NT, CR> LoggableOrderProtocol<RQ> for HotIron<RQ, NT, CR>
 where
-    RQ: SerMsg,
+    RQ: SerMsg + SessionBased,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
-    CR: Send + Sync + 'static,
+    CR: CryptoInformationProvider + Send + Sync + 'static,
 {
     type PersistableTypes = HotIronOxSer<RQ>;
 }
@@ -29,7 +31,7 @@ where
 impl<RQ, NT, CR> OrderProtocolLogHelper<RQ, HotIronOxSer<RQ>, HotIronOxSer<RQ>>
     for HotIron<RQ, NT, CR>
 where
-    RQ: SerMsg,
+    RQ: SerMsg + SessionBased,
     NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
     CR: Send + Sync + 'static,
 {

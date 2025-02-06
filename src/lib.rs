@@ -22,6 +22,8 @@ use lazy_static::lazy_static;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use anyhow::anyhow;
+use crate::config::HotIronInitConfig;
+use crate::view::leader_allocation::RoundRobinLA;
 
 pub mod crypto;
 pub mod decisions;
@@ -129,7 +131,7 @@ where
     CR: CryptoInformationProvider + Send + Sync,
 {
     type Serialization = HotIronOxSer<RQ>;
-    type Config = ();
+    type Config = HotIronInitConfig<CR>;
 
     fn handle_off_ctx_message(
         &mut self,
@@ -179,17 +181,21 @@ where
     {
         let OrderingProtocolArgs(node_id, timeout, rq, batch_output, node, quorum) =
             ordering_protocol_args;
+        
+        let HotIronInitConfig {
+            quorum_info
+        } = config;
 
         let hot_stuff_protocol = HotStuffProtocol::new(timeout, node.clone(), batch_output)
-            .map_err(|_| anyhow!("Error while initializing hot stuff protocol").into())?;
+            .map_err(|_e| anyhow::anyhow!("Error while initializing hot stuff protocol"))?;
 
-        let view = View::new_from_quorum(SeqNo::ZERO, quorum);
+        let view = View::new_from_quorum::<RoundRobinLA>(SeqNo::ZERO, quorum);
 
         Ok(HotIron {
             node_id,
             current_view: view,
             network_node: node,
-            quorum_information: Arc::new(()),
+            quorum_information: Arc::new(quorum_info),
             hot_stuff_protocol,
         })
     }
