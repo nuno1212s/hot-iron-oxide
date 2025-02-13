@@ -18,6 +18,7 @@ use atlas_core::ordering_protocol::{
     ShareableConsensusMessage,
 };
 use std::sync::Arc;
+use crate::messages::{HotFeOxMsgType, ProposalType, VoteType};
 
 impl<RQ, NT, CR> LoggableOrderProtocol<RQ> for HotIron<RQ, NT, CR>
 where
@@ -28,6 +29,15 @@ where
     type PersistableTypes = HotIronOxSer<RQ>;
 }
 
+pub const VOTE_NEW_VIEW: &str = "VOTE-NEW-VIEW";
+pub const PROPOSAL_PREPARE: &str = "PROPOSAL-PREPARE";
+pub const VOTE_PREPARE: &str = "VOTE-PREPARE";
+pub const PROPOSAL_PRE_COMMIT: &str = "PROPOSAL-PRE-COMMIT";
+pub const VOTE_PRE_COMMIT: &str = "VOTE-PRE-COMMIT";
+pub const PROPOSAL_COMMIT: &str = "PROPOSAL-COMMIT";
+pub const VOTE_COMMIT: &str = "VOTE-COMMIT";
+pub const PROPOSAL_DECIDE: &str = "PROPOSAL-DECIDE";
+
 impl<RQ, NT, CR> OrderProtocolLogHelper<RQ, HotIronOxSer<RQ>, HotIronOxSer<RQ>>
     for HotIron<RQ, NT, CR>
 where
@@ -36,13 +46,55 @@ where
     CR: Send + Sync + 'static,
 {
     fn message_types() -> Vec<&'static str> {
-        todo!()
+        vec![
+            VOTE_NEW_VIEW,
+            PROPOSAL_PREPARE,
+            VOTE_PREPARE,
+            PROPOSAL_PRE_COMMIT,
+            VOTE_PRE_COMMIT,
+            PROPOSAL_COMMIT,
+            VOTE_COMMIT,
+            PROPOSAL_DECIDE,
+        ]
     }
 
     fn get_type_for_message(
         msg: &ProtocolMessage<RQ, HotIronOxSer<RQ>>,
     ) -> atlas_common::error::Result<&'static str> {
-        todo!()
+        match msg.message() {
+            HotFeOxMsgType::Proposal(msg) => {
+                match msg.proposal_type() {
+                    ProposalType::Prepare(_, _) => {
+                        Ok(PROPOSAL_PREPARE)
+                    }
+                    ProposalType::PreCommit(_) => {
+                        Ok(PROPOSAL_PRE_COMMIT)
+                    }
+                    ProposalType::Commit(_) => {
+                        Ok(PROPOSAL_COMMIT)
+                    }
+                    ProposalType::Decide(_) => {
+                        Ok(PROPOSAL_DECIDE)
+                    }
+                }
+            }
+            HotFeOxMsgType::Vote(msg) => {
+                match msg.vote_type() {
+                    VoteType::NewView(_) => {
+                        Ok(VOTE_NEW_VIEW)
+                    }
+                    VoteType::PrepareVote(_) => {
+                        Ok(VOTE_PREPARE)
+                    }
+                    VoteType::PreCommitVote(_) => {
+                        Ok(VOTE_PRE_COMMIT)
+                    }
+                    VoteType::CommitVote(_) => {
+                        Ok(VOTE_COMMIT)
+                    }
+                }
+            }
+        }
     }
 
     fn init_proof_from(

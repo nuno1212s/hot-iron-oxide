@@ -80,8 +80,11 @@ mod crypto_tests {
             self.public_key_parts.get(&self.id).unwrap()
         }
 
-        fn get_public_key_for_index(&self, index: usize) -> &PublicKeyPart {
-            self.public_key_parts.get(&self.node_list[index]).unwrap()
+        fn get_public_key_for_index(&self, index: usize) -> PublicKeyPart {
+            self.public_key_parts
+                .get(&self.node_list[index])
+                .unwrap()
+                .clone()
         }
 
         fn get_public_key_set(&self) -> &PublicKeySet {
@@ -90,15 +93,14 @@ mod crypto_tests {
     }
 
     const NODE_COUNT: usize = 4;
-    
+
     #[test]
     fn test_partial_signature_verification() {
         let threshold_crypto = CryptoInfoMockFactory::new(NODE_COUNT).unwrap();
 
         let to_sign = b"Hello, World!";
 
-        let nodes = (0..NODE_COUNT)
-            .map(NodeId::from).collect::<Vec<_>>();
+        let nodes = (0..NODE_COUNT).map(NodeId::from).collect::<Vec<_>>();
 
         let cryptos = nodes
             .iter()
@@ -106,19 +108,21 @@ mod crypto_tests {
             .collect::<HashMap<NodeId, _>>();
 
         nodes.iter().for_each(|signer| {
-            let signature = AtlasTHCryptoProvider::sign_message(cryptos.get(signer).unwrap(), to_sign);
+            let signature =
+                AtlasTHCryptoProvider::sign_message(cryptos.get(signer).unwrap(), to_sign);
 
             nodes.iter().for_each(|other_node_id| {
                 AtlasTHCryptoProvider::verify_partial_signature_by_node(
                     cryptos.get(other_node_id).unwrap(),
                     signer.0 as usize,
                     &signature,
-                    to_sign
-                ).unwrap();
+                    to_sign,
+                )
+                .unwrap();
             });
         });
     }
-    
+
     #[test]
     fn test_partial_signature_combination() {
         let threshold_crypto = CryptoInfoMockFactory::new(NODE_COUNT).unwrap();
@@ -156,5 +160,4 @@ mod crypto_tests {
                 .unwrap();
         });
     }
-
 }

@@ -1,13 +1,16 @@
 mod test;
 
+use crate::messages::serialize::serialize_vote_message;
 use crate::messages::VoteType;
-use atlas_common::crypto::threshold_crypto::{CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PublicKeyPart, PublicKeySet, VerifySignatureError};
+use atlas_common::crypto::threshold_crypto::{CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PrivateKeySet, PublicKeyPart, PublicKeySet, VerifySignatureError};
+use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use getset::Getters;
 use std::error::Error;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use atlas_common::node_id::NodeId;
-use crate::messages::serialize::serialize_vote_message;
+use atlas_core::ordering_protocol::OrderProtocolTolerance;
+use crate::HotIron;
 
 /// Threshold crypto related information storage
 #[derive(Getters)]
@@ -35,7 +38,7 @@ pub trait CryptoPartialSigProvider: Sync {
     fn sign_message<CR>(crypto_info: &CR, message: &[u8]) -> PartialSignature
     where
         CR: CryptoInformationProvider;
-    
+
     fn verify_partial_signature_by_node<CR>(
         crypto_info: &CR,
         node_index: usize,
@@ -48,7 +51,7 @@ pub trait CryptoPartialSigProvider: Sync {
 
 pub trait CryptoSignatureCombiner: Sync {
     type CombinationError: Error + Send + Sync;
-    
+
     type VerificationError: Error + Send + Sync;
 
     fn combine_signatures<CR>(
@@ -65,7 +68,6 @@ pub trait CryptoSignatureCombiner: Sync {
     ) -> Result<(), Self::VerificationError>
     where
         CR: CryptoInformationProvider;
-
 }
 
 pub fn get_partial_signature_for_message<CR, CP>(
@@ -78,7 +80,7 @@ where
     CP: CryptoPartialSigProvider,
 {
     let bytes = serialize_vote_message(view, vote_msg);
-    
+
     CP::sign_message(crypto_info, &bytes)
 }
 
@@ -95,7 +97,7 @@ where
 
 pub struct AtlasTHCryptoProvider;
 
-impl CryptoProvider for AtlasTHCryptoProvider { }
+impl CryptoProvider for AtlasTHCryptoProvider {}
 
 impl CryptoPartialSigProvider for AtlasTHCryptoProvider {
     fn sign_message<CR>(crypto_info: &CR, message: &[u8]) -> PartialSignature
@@ -104,7 +106,7 @@ impl CryptoPartialSigProvider for AtlasTHCryptoProvider {
     {
         crypto_info.get_own_private_key().partially_sign(message)
     }
-    
+
     fn verify_partial_signature_by_node<CR>(
         crypto_info: &CR,
         node_index: usize,
@@ -114,13 +116,15 @@ impl CryptoPartialSigProvider for AtlasTHCryptoProvider {
     where
         CR: CryptoInformationProvider,
     {
-        crypto_info.get_public_key_for_index(node_index).verify(message, signature)
+        crypto_info
+            .get_public_key_for_index(node_index)
+            .verify(message, signature)
     }
 }
 
 impl CryptoSignatureCombiner for AtlasTHCryptoProvider {
     type CombinationError = CombineSignatureError;
-    
+
     type VerificationError = VerifySignatureError;
 
     fn combine_signatures<CR>(
@@ -130,12 +134,18 @@ impl CryptoSignatureCombiner for AtlasTHCryptoProvider {
     where
         CR: CryptoInformationProvider,
     {
-        crypto_info.get_public_key_set().combine_signatures(signature.iter().map(|(id, sig)| (id.0 as u64, sig)))
+        crypto_info
+            .get_public_key_set()
+            .combine_signatures(signature.iter().map(|(id, sig)| (id.0 as u64, sig)))
     }
 
-    fn verify_combined_signature<CR>(crypto_info: &CR, signature: &CombinedSignature, message: &[u8]) -> Result<(), Self::VerificationError>
+    fn verify_combined_signature<CR>(
+        crypto_info: &CR,
+        signature: &CombinedSignature,
+        message: &[u8],
+    ) -> Result<(), Self::VerificationError>
     where
-        CR: CryptoInformationProvider
+        CR: CryptoInformationProvider,
     {
         crypto_info.get_public_key_set().verify(message, signature)
     }
@@ -163,4 +173,28 @@ impl CryptoInformationProvider for QuorumInfo {
     fn get_public_key_set(&self) -> &PublicKeySet {
         &self.pub_key
     }
+}
+
+impl QuorumInfo {
+    
+    pub fn initialize(f: usize) -> Vec<Self>{
+        let key_set = PrivateKeySet::gen_random(2 * f + 1);
+        
+        let n = 3 * f + 1;
+        //TODO: Improve this
+        
+        (0..n).map(|i| {
+            let priv_key = key_set.private_key_part(i);
+            let pub_key = key_set.public_key_set();
+            
+            let our_pub_key = pub_key.public_key_share(i);
+            
+            Self {
+                our_priv_key: priv_key,
+                our_pub_key,
+                pub_key,
+            }
+        }).collect()
+    }
+    
 }

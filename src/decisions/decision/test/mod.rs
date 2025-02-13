@@ -142,8 +142,11 @@ mod decision_test {
             self.public_key_parts.get(&self.id).unwrap()
         }
 
-        fn get_public_key_for_index(&self, index: usize) -> &PublicKeyPart {
-            self.public_key_parts.get(&self.node_list[index]).unwrap()
+        fn get_public_key_for_index(&self, index: usize) -> PublicKeyPart {
+            self.public_key_parts
+                .get(&self.node_list[index])
+                .unwrap()
+                .clone()
         }
 
         fn get_public_key_set(&self) -> &PublicKeySet {
@@ -303,7 +306,7 @@ mod decision_test {
     struct RQAggr;
 
     impl<RQ> ReqAggregator<RQ> for RQAggr {
-        fn take_pool_requests(&self) -> (Vec<StoredRequestMessage<RQ>>, Digest) {
+        fn take_pool_requests(&self) -> (Vec<StoredMessage<RQ>>, Digest) {
             (vec![], Digest::blank())
         }
     }
@@ -318,7 +321,7 @@ mod decision_test {
 
         let our_node_id = node_id.unwrap_or(quorum[0]);
 
-        let view = View::new_from_quorum::<RoundRobinLA>(seq_no.unwrap_or(SeqNo::ZERO), quorum);
+        let view = View::new_from_quorum(seq_no.unwrap_or(SeqNo::ZERO), quorum);
 
         HSDecision::new(view, our_node_id)
     }
@@ -564,7 +567,7 @@ mod decision_test {
             quorum,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::DecisionProgressed(_)) })
+                .filter(|decision| { matches!(decision, DecisionResult::DecisionProgressed(_, _)) })
                 .count()
         );
 
@@ -650,7 +653,9 @@ mod decision_test {
             quorum - 1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::DecisionProgressed(_)) })
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                })
                 .count()
         );
 
@@ -658,7 +663,9 @@ mod decision_test {
             1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::PrepareQC(_, _)) })
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(Some(_), _))
+                })
                 .count()
         );
 
@@ -746,7 +753,9 @@ mod decision_test {
             quorum - 1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::DecisionProgressed(_)) })
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                })
                 .count()
         );
 
@@ -754,7 +763,9 @@ mod decision_test {
             1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::LockedQC(_, _)) })
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(Some(_), _))
+                })
                 .count()
         );
 
@@ -844,7 +855,9 @@ mod decision_test {
             quorum - 1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::DecisionProgressed(_)) })
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                })
                 .count()
         );
 
@@ -852,7 +865,7 @@ mod decision_test {
             1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::Decided(_)) })
+                .filter(|decision| { matches!(decision, DecisionResult::Decided(Some(_), _)) })
                 .count()
         );
 
@@ -947,7 +960,7 @@ mod decision_test {
         let seq_no = scenario.decision.sequence_number();
 
         let mut msg_decision_log = MsgLeaderDecisionLog::default();
-        
+
         let cryptos_for = scenario
             .nodes
             .iter()
@@ -973,7 +986,9 @@ mod decision_test {
             1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::DecisionProgressed(_)) })
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                })
                 .count()
         );
 
@@ -1066,7 +1081,7 @@ mod decision_test {
         let mut scenario = setup_scenario(NodeId(2));
 
         let seq_no = scenario.decision.sequence_number();
-        
+
         let mut msg_decision_log = MsgLeaderDecisionLog::default();
 
         let cryptos_for = scenario
@@ -1089,19 +1104,21 @@ mod decision_test {
             &DecisionHandler::default(),
             &mut msg_decision_log,
         );
-        
+
         let results = pre_commit_proposal_messages::<BlankProtocol>(
             &mut scenario,
             &cryptos_for,
             &DecisionHandler::default(),
             &mut msg_decision_log,
         );
-        
+
         assert_eq!(
             1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::PrepareQC(_, _)) })
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                })
                 .count()
         );
 
@@ -1109,6 +1126,5 @@ mod decision_test {
             scenario.decision.current_state,
             DecisionState::Commit(_)
         ));
-        
     }
 }

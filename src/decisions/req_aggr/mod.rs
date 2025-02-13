@@ -9,11 +9,9 @@ use tracing::error;
 
 ///
 /// The aggregator for requests
-/// 
+///
 pub trait ReqAggregator<RQ>: Send + Sync {
-    
     fn take_pool_requests(&self) -> (Vec<StoredMessage<RQ>>, Digest);
-    
 }
 
 pub struct RequestAggr<RQ> {
@@ -64,7 +62,7 @@ impl<RQ> RequestAggr<RQ> {
 
                 current_result
             };
-            
+
             let mut pool_guard = self.current_pool.lock().unwrap();
             pool_guard.0.append(&mut result.into());
 
@@ -74,20 +72,25 @@ impl<RQ> RequestAggr<RQ> {
     }
 
     fn calculate_digest_for(stored: &[StoredMessage<RQ>]) -> Digest {
-        let digest = stored.iter()
+        let digest = stored
+            .iter()
             .map(StoredMessage::header)
             .map(Header::digest)
             .fold(Context::new(), |mut context, digest| {
                 context.update(digest.as_ref());
-                
+
                 context
-            }).finish();
+            })
+            .finish();
 
         digest
     }
 }
 
-impl<RQ> ReqAggregator<RQ> for RequestAggr<RQ> where RQ: Send + Sync {
+impl<RQ> ReqAggregator<RQ> for RequestAggr<RQ>
+where
+    RQ: Send + Sync,
+{
     fn take_pool_requests(&self) -> (Vec<StoredMessage<RQ>>, Digest) {
         let mut guard = self.current_pool.lock().unwrap();
 

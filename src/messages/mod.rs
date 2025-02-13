@@ -6,10 +6,10 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum VoteType {
     NewView(Option<QC>),
     PrepareVote(DecisionNodeHeader),
@@ -117,7 +117,49 @@ impl From<VoteMessage> for DecisionNodeHeader {
 }
 
 impl<D> Debug for HotFeOxMsg<D> {
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        todo!()
+    fn fmt(&self, writer: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        
+        write!(writer, "HotStuffMsg {{ {:?} ", self.curr_view)?;
+
+        match &self.message {
+            HotFeOxMsgType::Proposal(msg) => {
+                write!(writer, "Proposal {{ {:?} }}", msg)
+            }
+            HotFeOxMsgType::Vote(msg) => {
+                write!(writer, "Vote {{ {:?} }}", msg)
+            }
+        }
+        
+    }
+}
+
+impl Debug for VoteMessage {
+    fn fmt(&self, writer: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(writer, "VoteMessage {{ {:?} }}", self.vote_type)
+    }
+}
+
+impl<D> Debug for ProposalMessage<D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ProposalMessage {{ {:?} }}", self.proposal_type)
+    }
+}
+
+impl<D> Debug for ProposalType<D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProposalType::Prepare(dn, qc) => {
+                write!(f, "Prepare {{ {:?}, {:?} }}", dn, qc)
+            }
+            ProposalType::PreCommit(qc) => {
+                write!(f, "PreCommit {{ {:?} }}", qc)
+            }
+            ProposalType::Commit(qc) => {
+                write!(f, "Commit {{ {:?} }}", qc)
+            }
+            ProposalType::Decide(qc) => {
+                write!(f, "Decide {{ {:?} }}", qc)
+            }
+        }
     }
 }

@@ -1,13 +1,14 @@
 pub mod leader_allocation;
+pub mod serialization;
 
-#[cfg(feature = "serialize_serde")]
-use serde::{Deserialize, Serialize};
+use crate::view::leader_allocation::{LeaderAllocator, RoundRobinLA};
+use crate::HotIron;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::OrderProtocolTolerance;
-use crate::HotIron;
-use crate::view::leader_allocation::LeaderAllocator;
+#[cfg(feature = "serialize_serde")]
+use serde::{Deserialize, Serialize};
 
 /// A view struct, containing a view of the current quorym
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
@@ -20,7 +21,6 @@ pub struct View {
 }
 
 impl View {
-
     pub fn new(seq: SeqNo, members: Vec<NodeId>, leader: NodeId, f: usize) -> Self {
         Self {
             seq,
@@ -30,19 +30,26 @@ impl View {
         }
     }
 
-    pub fn new_from_quorum<L>(seq_no: SeqNo, members: Vec<NodeId>) -> Self
-    where L: LeaderAllocator {
-        let f = crate::get_f_for_n(members.len());
-        let leader = L::allocate_leader_from(&members, seq_no);
+    pub fn new_from_quorum(seq_no: SeqNo, members: Vec<NodeId>) -> Self {
         
-        Self::new(seq_no, members, leader, f)
+        Self::new_from_quorum_with_leader_allocator::<RoundRobinLA>(seq_no, members)
+        
     }
     
-    pub fn with_new_seq<L>(&self, seq: SeqNo) -> Self
-    where L: LeaderAllocator {
-        Self::new_from_quorum::<L>(seq, self.members.clone())
+    fn new_from_quorum_with_leader_allocator<L>(seq_no: SeqNo, members: Vec<NodeId>) -> Self
+    where
+        L: LeaderAllocator,
+    {
+        let f = crate::get_f_for_n(members.len());
+        let leader = L::allocate_leader_from(&members, seq_no);
+
+        Self::new(seq_no, members, leader, f)
     }
 
+    pub fn with_new_seq(&self, seq: SeqNo) -> Self
+    {
+        Self::new_from_quorum(seq, self.members.clone())
+    }
 }
 
 impl Orderable for View {
@@ -72,3 +79,4 @@ impl NetworkView for View {
         self.members.len()
     }
 }
+

@@ -88,20 +88,26 @@ where
     pub fn install_seq_no(&mut self, mut seq_no: SeqNo) {
         self.current_seq_no = seq_no;
 
-        let decision = self.decisions.pop_back().expect("Cannot have empty decision queue").view().clone();
+        let decision = self
+            .decisions
+            .pop_back()
+            .expect("Cannot have empty decision queue")
+            .view()
+            .clone();
 
-        let new_view = decision.with_new_seq::<RoundRobinLA>(seq_no);
-        
+        let new_view = decision.with_new_seq(seq_no);
+
         let decisions_to_pop = self.decisions.len();
-        
+
         self.decisions.clear();
-        
+
         for _ in 0..decisions_to_pop {
             seq_no = seq_no.next();
-            
-            let new_view = new_view.with_new_seq::<RoundRobinLA>(seq_no);
-            
-            self.decisions.push_back(HSDecision::new(new_view, self.node_id));
+
+            let new_view = new_view.with_new_seq(seq_no);
+
+            self.decisions
+                .push_back(HSDecision::new(new_view, self.node_id));
         }
     }
 
@@ -280,8 +286,8 @@ where
         let next_view = self
             .decisions
             .back()
-            .map(|d| d.view().with_new_seq::<RoundRobinLA>(no))
-            .unwrap_or_else(|| popped_decision.view().with_new_seq::<RoundRobinLA>(no));
+            .map(|d| d.view().with_new_seq(no))
+            .unwrap_or_else(|| popped_decision.view().with_new_seq(no));
 
         let decision = HSDecision::new(next_view, self.node_id);
 

@@ -4,42 +4,49 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::{Buf, Header};
 use atlas_communication::reconfiguration::NetworkInformationProvider;
-use atlas_core::ordering_protocol::networking::serialize::{OrderProtocolVerificationHelper, OrderingProtocolMessage};
+use atlas_core::ordering_protocol::networking::serialize::{
+    OrderProtocolVerificationHelper, OrderingProtocolMessage,
+};
 use serde::Serialize;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 pub struct HotIronOxSer<RQ>(PhantomData<fn() -> RQ>);
 
-impl <RQ> OrderingProtocolMessage<RQ> for HotIronOxSer<RQ> 
-where RQ: SerMsg
+impl<RQ> OrderingProtocolMessage<RQ> for HotIronOxSer<RQ>
+where
+    RQ: SerMsg,
 {
     type ProtocolMessage = HotFeOxMsg<RQ>;
     type DecisionMetadata = DecisionNodeHeader;
     type DecisionAdditionalInfo = QC;
 
-    fn internally_verify_message<NI, OPVH>(network_info: &Arc<NI>, header: &Header, message: &Self::ProtocolMessage) -> atlas_common::error::Result<()>
-        where NI: NetworkInformationProvider,
-              OPVH: OrderProtocolVerificationHelper<RQ, Self, NI>,
-              Self: Sized {
+    fn internally_verify_message<NI, OPVH>(
+        network_info: &Arc<NI>,
+        header: &Header,
+        message: &Self::ProtocolMessage,
+    ) -> atlas_common::error::Result<()>
+    where
+        NI: NetworkInformationProvider,
+        OPVH: OrderProtocolVerificationHelper<RQ, Self, NI>,
+        Self: Sized,
+    {
         match message.message() {
-            HotFeOxMsgType::Proposal(proposal_message) => {
-                Ok(())
-            }
+            HotFeOxMsgType::Proposal(proposal_message) => Ok(()),
             HotFeOxMsgType::Vote(vote_message) => {
-                let buf = serialize_vote_message(message.sequence_number(), vote_message.vote_type());
-                
+                let buf =
+                    serialize_vote_message(message.sequence_number(), vote_message.vote_type());
+
                 Ok(())
             }
         }
-        
     }
 }
 
 #[derive(Serialize)]
 struct VoteMessage<'a> {
     view_seq: SeqNo,
-    vote_type: &'a VoteType
+    vote_type: &'a VoteType,
 }
 
 pub fn serialize_vote_message(view_seq: SeqNo, vote_type: &VoteType) -> Buf {
@@ -50,6 +57,6 @@ pub fn serialize_vote_message(view_seq: SeqNo, vote_type: &VoteType) -> Buf {
 
     let bytes = bincode::serde::encode_to_vec(&vote_msg, bincode::config::standard())
         .expect("Failed to serialize");
-    
+
     Buf::from(bytes)
 }

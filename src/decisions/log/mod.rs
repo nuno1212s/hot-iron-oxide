@@ -99,7 +99,6 @@ impl MsgDecisionLog {
 }
 
 impl ReplicaDecisionLog {
-
     pub fn set_prepare_qc(&mut self, qc: QC) {
         self.prepare_qc = Some(qc);
     }
@@ -107,11 +106,9 @@ impl ReplicaDecisionLog {
     pub fn set_locked_qc(&mut self, qc: QC) {
         self.locked_qc = Some(qc);
     }
-
 }
 
 impl LeaderDecisionLog {
-
     pub fn set_prepare_qc(&mut self, qc: QC) {
         self.prepare_qc = Some(qc);
     }
@@ -123,50 +120,47 @@ impl LeaderDecisionLog {
     pub fn set_commit_qc(&mut self, qc: QC) {
         self.commit_qc = Some(qc);
     }
-
 }
 
 impl<D> DecisionLog<D> {
-    
     pub fn new(decision_log_type: DecisionLogType) -> Self {
         Self {
             current_proposal: Default::default(),
             decision_log_type,
         }
     }
-    
+
     pub fn into_current_proposal(self) -> Option<DecisionNode<D>> {
         self.current_proposal
     }
-    
+
     pub fn as_replica(&self) -> &ReplicaDecisionLog {
         match &self.decision_log_type {
             DecisionLogType::Replica(replica) => replica,
             _ => unreachable!(),
         }
     }
-    
+
     pub fn as_mut_replica(&mut self) -> &mut ReplicaDecisionLog {
         match &mut self.decision_log_type {
             DecisionLogType::Replica(replica) => replica,
             _ => unreachable!(),
         }
     }
-    
+
     pub fn as_leader(&self) -> &LeaderDecisionLog {
         match &self.decision_log_type {
             DecisionLogType::Leader(leader) => leader,
             _ => unreachable!(),
         }
     }
-    
+
     pub fn as_mut_leader(&mut self) -> &mut LeaderDecisionLog {
         match &mut self.decision_log_type {
             DecisionLogType::Leader(leader) => leader,
             _ => unreachable!(),
         }
     }
-    
 }
 
 impl VoteStore {
@@ -241,7 +235,7 @@ impl MsgLeaderDecisionLog {
             VoteType::PrepareVote(vote) => {
                 self.prepare_qc.accept_vote(sender, vote, signature);
                 Ok(())
-            },
+            }
             VoteType::PreCommitVote(vote) => {
                 self.pre_commit_qc.accept_vote(sender, vote, signature);
                 Ok(())

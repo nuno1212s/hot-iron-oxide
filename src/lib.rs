@@ -1,3 +1,4 @@
+use crate::config::HotIronInitConfig;
 use crate::crypto::{AtlasTHCryptoProvider, CryptoInformationProvider};
 use crate::decisions::hotstuff::HotStuffProtocol;
 use crate::decisions::{DecisionNodeHeader, QC};
@@ -12,25 +13,18 @@ use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::networking::{
     NetworkedOrderProtocolInitializer, OrderProtocolSendNode,
 };
-use atlas_core::ordering_protocol::{
-    Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult,
-    OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, ProtocolMessage,
-    ShareableConsensusMessage,
-};
+use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage, ShareableConsensusMessage};
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
-use std::marker::PhantomData;
 use std::sync::Arc;
-use anyhow::anyhow;
-use crate::config::HotIronInitConfig;
-use crate::view::leader_allocation::RoundRobinLA;
 
+pub mod config;
 pub mod crypto;
 pub mod decisions;
 mod loggable_protocol;
 pub mod messages;
 pub mod view;
-mod config;
+pub mod metric;
 
 lazy_static! {
     static ref MOD_NAME: Arc<str> = Arc::from("HOT-IRON");
@@ -181,15 +175,13 @@ where
     {
         let OrderingProtocolArgs(node_id, timeout, rq, batch_output, node, quorum) =
             ordering_protocol_args;
-        
-        let HotIronInitConfig {
-            quorum_info
-        } = config;
+
+        let HotIronInitConfig { quorum_info } = config;
 
         let hot_stuff_protocol = HotStuffProtocol::new(timeout, node.clone(), batch_output)
             .map_err(|_e| anyhow::anyhow!("Error while initializing hot stuff protocol"))?;
 
-        let view = View::new_from_quorum::<RoundRobinLA>(SeqNo::ZERO, quorum);
+        let view = View::new_from_quorum(SeqNo::ZERO, quorum);
 
         Ok(HotIron {
             node_id,
@@ -198,5 +190,22 @@ where
             quorum_information: Arc::new(quorum_info),
             hot_stuff_protocol,
         })
+    }
+}
+
+impl<RQ, NT, CR> PermissionedOrderingProtocol for HotIron<RQ, NT, CR>
+where
+    RQ: SerMsg + SessionBased,
+    NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> + 'static,
+    CR: CryptoInformationProvider + Send + Sync,
+{
+    type PermissionedSerialization = HotIronOxSer<RQ>;
+
+    fn view(&self) -> atlas_core::ordering_protocol::View<Self::PermissionedSerialization> {
+        self.current_view.clone()
+    }
+
+    fn install_view(&mut self, view: atlas_core::ordering_protocol::View<Self::PermissionedSerialization>) {
+        self.current_view = view;
     }
 }

@@ -408,7 +408,10 @@ where
 
                     self.current_state = DecisionState::Commit(0);
 
-                    Ok(DecisionResult::DecisionProgressed(Some(created_qc), message))
+                    Ok(DecisionResult::DecisionProgressed(
+                        Some(created_qc),
+                        message,
+                    ))
                 } else {
                     Ok(DecisionResult::DecisionProgressed(None, message))
                 }
@@ -534,7 +537,10 @@ where
 
                     self.current_state = DecisionState::Decide(0);
 
-                    Ok(DecisionResult::DecisionProgressed(Some(created_qc), message))
+                    Ok(DecisionResult::DecisionProgressed(
+                        Some(created_qc),
+                        message,
+                    ))
                 } else {
                     Ok(DecisionResult::DecisionProgressed(None, message))
                 }

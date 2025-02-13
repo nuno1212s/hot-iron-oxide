@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
-use atlas_core::ordering_protocol::ShareableMessage;
 use crate::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType, VoteType};
+use atlas_core::ordering_protocol::ShareableMessage;
+use std::collections::VecDeque;
 
 macro_rules! extract_msg {
     ($g:expr, $q:expr) => {
@@ -8,7 +8,6 @@ macro_rules! extract_msg {
     };
     ($rsp:expr, $g:expr, $q:expr) => {
         if let Some(stored) = $q.pop_front() {
-
             DecisionPollStatus::NextMessage(stored)
         } else {
             *$g = false;
@@ -16,7 +15,6 @@ macro_rules! extract_msg {
         }
     };
 }
-
 
 pub struct HotStuffTBOQueue<D> {
     get_queue: bool,
@@ -32,38 +30,34 @@ impl<D> HotStuffTBOQueue<D> {
         self.get_queue = true;
 
         match message.message().message() {
-            HotFeOxMsgType::Proposal(prop) => {
-                match prop.proposal_type() {
-                    ProposalType::Prepare(_, _) => {
-                        self.prepare.push_back(message);
-                    }
-                    ProposalType::PreCommit(_) => {
-                        self.pre_commit.push_back(message);
-                    }
-                    ProposalType::Commit(_) => {
-                        self.commit.push_back(message);
-                    }
-                    ProposalType::Decide(_) => {
-                        self.decide.push_back(message);
-                    }
+            HotFeOxMsgType::Proposal(prop) => match prop.proposal_type() {
+                ProposalType::Prepare(_, _) => {
+                    self.prepare.push_back(message);
                 }
-            }
-            HotFeOxMsgType::Vote(vote) => {
-                match vote.vote_type() {
-                    VoteType::PrepareVote(_) => {
-                        self.prepare.push_back(message);
-                    }
-                    VoteType::PreCommitVote(_) => {
-                        self.pre_commit.push_back(message);
-                    }
-                    VoteType::CommitVote(_) => {
-                        self.commit.push_back(message);
-                    }
-                    VoteType::NewView(_) => {
-                        self.new_view.push_back(message);
-                    }
+                ProposalType::PreCommit(_) => {
+                    self.pre_commit.push_back(message);
                 }
-            }
+                ProposalType::Commit(_) => {
+                    self.commit.push_back(message);
+                }
+                ProposalType::Decide(_) => {
+                    self.decide.push_back(message);
+                }
+            },
+            HotFeOxMsgType::Vote(vote) => match vote.vote_type() {
+                VoteType::PrepareVote(_) => {
+                    self.prepare.push_back(message);
+                }
+                VoteType::PreCommitVote(_) => {
+                    self.pre_commit.push_back(message);
+                }
+                VoteType::CommitVote(_) => {
+                    self.commit.push_back(message);
+                }
+                VoteType::NewView(_) => {
+                    self.new_view.push_back(message);
+                }
+            },
         }
     }
 
@@ -76,7 +70,7 @@ impl<D> HotStuffTBOQueue<D> {
     }
 }
 
-impl<RQ> Default for HotStuffTBOQueue<RQ>{
+impl<RQ> Default for HotStuffTBOQueue<RQ> {
     fn default() -> Self {
         Self {
             get_queue: false,

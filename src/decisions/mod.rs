@@ -3,14 +3,13 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
-use atlas_core::messages::StoredRequestMessage;
+use atlas_communication::message::StoredMessage;
 use getset::{CopyGetters, Getters};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::sync::Arc;
-use atlas_communication::message::StoredMessage;
 
 pub(crate) mod decision;
 pub(crate) mod hotstuff;
@@ -21,7 +20,7 @@ pub(crate) mod req_aggr;
 /// The decision node header
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(PartialEq, Eq, Clone, Hash, Copy)]
+#[derive(PartialEq, Eq, Clone, Hash, Copy, Debug)]
 pub struct DecisionNodeHeader {
     view_no: SeqNo,
     previous_block: Option<Digest>,
@@ -145,6 +144,14 @@ impl<D> DecisionNode<D> {
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone, PartialEq, Eq, Hash, Copy)]
+pub enum QCType {
+    PrepareVote,
+    PreCommitVote,
+    CommitVote,
+}
+
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Getters, CopyGetters, Hash, PartialEq, Eq)]
 /// A quorum certificate
 pub struct QC {
@@ -213,10 +220,14 @@ impl<D> From<DecisionNode<D>> for (DecisionNodeHeader, Vec<StoredMessage<D>>) {
     }
 }
 
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, PartialEq, Eq, Hash, Copy)]
-pub enum QCType {
-    PrepareVote,
-    PreCommitVote,
-    CommitVote,
+impl Debug for QC {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "QC: view_seq: {:?}, decision_node: {:?}", self.view_seq, self.decision_node)
+    }
+}
+
+impl<D> Debug for DecisionNode<D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DecisionNode {{ {:?} }}", self.decision_header)
+    }
 }
