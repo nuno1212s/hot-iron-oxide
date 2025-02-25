@@ -17,6 +17,7 @@ use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, OPEx
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
 use std::sync::Arc;
+use tracing::info;
 
 pub mod config;
 pub mod crypto;
@@ -141,6 +142,7 @@ where
     }
 
     fn poll(&mut self) -> Result<HotIronPollResult<RQ>> {
+        info!("Polling hot iron");
         Ok(self
             .hot_stuff_protocol
             .poll::<CR, AtlasTHCryptoProvider>(&self.quorum_information))

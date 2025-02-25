@@ -24,9 +24,11 @@ use atlas_core::ordering_protocol::{BatchedDecision, ProtocolConsensusDecision, 
 use getset::{Getters, Setters};
 use std::error::Error;
 use std::sync::Arc;
+use derive_more::with_trait::Display;
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, info };
 
+#[derive(Debug, Display)]
 pub enum DecisionState {
     Init,
     Prepare(usize),
@@ -219,6 +221,8 @@ where
         CP: CryptoProvider,
     {
         let is_leader = self.is_leader();
+        
+        info!(decision = &(u32::from(self.sequence_number())), "Processing message {:?} with current state {:?}", message, self.current_state);
 
         match &mut self.current_state {
             DecisionState::Init if self.view.sequence_number() == message.sequence_number() => {
