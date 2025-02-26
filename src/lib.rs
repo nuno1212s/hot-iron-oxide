@@ -17,7 +17,7 @@ use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, OPEx
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, trace};
 
 pub mod config;
 pub mod crypto;
@@ -38,7 +38,6 @@ where
     CR: Send + Sync,
 {
     node_id: NodeId,
-    current_view: View,
     network_node: Arc<NT>,
     quorum_information: Arc<CR>,
     hot_stuff_protocol: HotStuffProtocol<RQ, NT>,
@@ -97,7 +96,7 @@ where
     CR: Send + Sync,
 {
     fn sequence_number(&self) -> SeqNo {
-        self.current_view.sequence_number()
+        self.hot_stuff_protocol.sequence_number()
     }
 }
 
@@ -142,7 +141,7 @@ where
     }
 
     fn poll(&mut self) -> Result<HotIronPollResult<RQ>> {
-        info!("Polling hot iron");
+        trace!("Polling hot iron");
         Ok(self
             .hot_stuff_protocol
             .poll::<CR, AtlasTHCryptoProvider>(&self.quorum_information))
@@ -158,7 +157,8 @@ where
     }
 
     fn install_seq_no(&mut self, seq_no: SeqNo) -> Result<()> {
-        Ok(self.hot_stuff_protocol.install_seq_no(seq_no))
+        self.hot_stuff_protocol.install_seq_no(seq_no);
+        Ok(())
     }
 }
 
@@ -180,14 +180,13 @@ where
 
         let HotIronInitConfig { quorum_info } = config;
 
-        let hot_stuff_protocol = HotStuffProtocol::new(timeout, node.clone(), batch_output)
-            .map_err(|_e| anyhow::anyhow!("Error while initializing hot stuff protocol"))?;
-
         let view = View::new_from_quorum(SeqNo::ZERO, quorum);
+        
+        let hot_stuff_protocol = HotStuffProtocol::new(timeout, node.clone(), view, batch_output)
+            .map_err(|_e| anyhow::anyhow!("Error while initializing hot stuff protocol"))?;
 
         Ok(HotIron {
             node_id,
-            current_view: view,
             network_node: node,
             quorum_information: Arc::new(quorum_info),
             hot_stuff_protocol,
@@ -204,10 +203,10 @@ where
     type PermissionedSerialization = HotIronOxSer<RQ>;
 
     fn view(&self) -> atlas_core::ordering_protocol::View<Self::PermissionedSerialization> {
-        self.current_view.clone()
+        self.hot_stuff_protocol.view().clone()
     }
 
     fn install_view(&mut self, view: atlas_core::ordering_protocol::View<Self::PermissionedSerialization>) {
-        self.current_view = view;
+        self.hot_stuff_protocol.install_view(view);
     }
 }

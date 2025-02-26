@@ -2,15 +2,18 @@ mod test;
 
 use crate::messages::serialize::serialize_vote_message;
 use crate::messages::VoteType;
-use atlas_common::crypto::threshold_crypto::{CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PrivateKeySet, PublicKeyPart, PublicKeySet, VerifySignatureError};
+use crate::HotIron;
+use atlas_common::crypto::threshold_crypto::{
+    CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PrivateKeySet,
+    PublicKeyPart, PublicKeySet, VerifySignatureError,
+};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use getset::Getters;
-use std::error::Error;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use atlas_core::ordering_protocol::OrderProtocolTolerance;
-use crate::HotIron;
+use getset::Getters;
+use serde::{Deserialize, Serialize};
+use std::error::Error;
+use thiserror::Error;
 
 /// Threshold crypto related information storage
 #[derive(Getters)]
@@ -176,25 +179,25 @@ impl CryptoInformationProvider for QuorumInfo {
 }
 
 impl QuorumInfo {
-    
-    pub fn initialize(f: usize) -> Vec<Self>{
-        let key_set = PrivateKeySet::gen_random(2 * f + 1);
-        
+    pub fn initialize(f: usize) -> Vec<Self> {
+        let key_set = PrivateKeySet::gen_random(2 * f);
+
         let n = 3 * f + 1;
         //TODO: Improve this
-        
-        (0..n).map(|i| {
-            let priv_key = key_set.private_key_part(i);
-            let pub_key = key_set.public_key_set();
-            
-            let our_pub_key = pub_key.public_key_share(i);
-            
-            Self {
-                our_priv_key: priv_key,
-                our_pub_key,
-                pub_key,
-            }
-        }).collect()
+
+        (0..n)
+            .map(|i| {
+                let priv_key = key_set.private_key_part(i);
+                let pub_key = key_set.public_key_set();
+
+                let our_pub_key = pub_key.public_key_share(i);
+
+                Self {
+                    our_priv_key: priv_key,
+                    our_pub_key,
+                    pub_key,
+                }
+            })
+            .collect()
     }
-    
 }

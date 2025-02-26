@@ -31,9 +31,7 @@ impl View {
     }
 
     pub fn new_from_quorum(seq_no: SeqNo, members: Vec<NodeId>) -> Self {
-        
         Self::new_from_quorum_with_leader_allocator::<RoundRobinLA>(seq_no, members)
-        
     }
     
     fn new_from_quorum_with_leader_allocator<L>(seq_no: SeqNo, members: Vec<NodeId>) -> Self

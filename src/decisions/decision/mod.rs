@@ -26,7 +26,7 @@ use std::error::Error;
 use std::sync::Arc;
 use derive_more::with_trait::Display;
 use thiserror::Error;
-use tracing::{error, info };
+use tracing::{error, info, trace};
 
 #[derive(Debug, Display)]
 pub enum DecisionState {
@@ -126,6 +126,8 @@ where
                             &vote_type,
                         );
 
+                        info!("Sending vote message {:?} to view leader {:?}", vote_type, view_leader);
+                        
                         quiet_unwrap!(network.send(
                             HotFeOxMsg::new(
                                 seq,

@@ -53,7 +53,7 @@ where
 
     node: Arc<NT>,
 
-    current_seq_no: SeqNo,
+    current_view: View,
 
     /// Sequence numbers that need to be polled
     signal_queue: Signals,
@@ -69,24 +69,33 @@ where
     pub fn new(
         timeouts: TimeoutModHandle,
         node: Arc<NT>,
+        view: View,
         batch_output: BatchOutput<RQ>,
     ) -> Result<Self, ()> {
         let rq_aggr = RequestAggr::new(batch_output);
 
+        let mut decisions = VecDeque::new();
+
+        decisions.push_back(HSDecision::new(view.clone(), node.id()));
+        
+        let mut signals: Signals = Default::default();
+        
+        signals.push_signalled(view.sequence_number());
+        
         Ok(Self {
             node_id: node.id(),
-            decisions: Default::default(),
+            decisions,
             decision_handler: DecisionHandler::default(),
             request_aggr: rq_aggr,
             node,
-            current_seq_no: SeqNo::ZERO,
-            signal_queue: Default::default(),
+            current_view: view,
+            signal_queue: signals,
             timeouts,
         })
     }
 
     pub fn install_seq_no(&mut self, mut seq_no: SeqNo) {
-        self.current_seq_no = seq_no;
+        self.current_view = self.current_view.with_new_seq(seq_no);
 
         let decision = self
             .decisions
@@ -111,8 +120,16 @@ where
         }
     }
 
+    pub fn install_view(&mut self, view: View) {
+        self.current_view = view;
+    }
+
+    pub fn view(&self) -> &View {
+        &self.current_view
+    }
+
     fn index(&self, seq_no: &SeqNo) -> Either<InvalidSeqNo, usize> {
-        seq_no.index(self.current_seq_no)
+        seq_no.index(self.current_view.sequence_number())
     }
 
     pub fn can_finalize(&self) -> bool {
@@ -126,11 +143,11 @@ where
     pub fn queue(&mut self, message: ShareableMessage<HotFeOxMsg<RQ>>) {
         let message_seq = message.message().sequence_number();
 
-        let i = match message_seq.index(self.current_seq_no) {
+        let i = match message_seq.index(self.sequence_number()) {
             Either::Right(i) => i,
             Either::Left(_) => {
                 debug!("Ignoring consensus message {:?} received from {:?} as we are already in seq no {:?}",
-                    message, message.header().from(), self.current_seq_no);
+                    message, message.header().from(), self.sequence_number());
 
                 return;
             }
@@ -162,7 +179,7 @@ where
         RQ: SerMsg + SessionBased,
     {
         while let Some(seq) = self.signal_queue.pop_signalled() {
-            match seq.index(self.current_seq_no) {
+            match seq.index(self.sequence_number()) {
                 Either::Right(index) => {
                     let poll_result = self.decisions[index].poll::<_, _, CP>(
                         &self.node,
@@ -188,7 +205,8 @@ where
                 Either::Left(_) => {
                     debug!(
                         "Cannot possibly poll sequence number that is in the past {:?} vs {:?}",
-                        seq, self.current_seq_no
+                        seq,
+                        self.sequence_number()
                     );
                 }
             }
@@ -217,11 +235,11 @@ where
     {
         let message_seq = message.message().sequence_number();
 
-        let index = match message_seq.index(self.current_seq_no) {
+        let index = match message_seq.index(self.sequence_number()) {
             Either::Right(i) => i,
             Either::Left(_) => {
                 debug!("Ignoring consensus message {:?} received from {:?} as we are already in seq no {:?}",
-                    message, message.header().from(), self.current_seq_no);
+                    message, message.header().from(), self.sequence_number());
 
                 return Ok(HotIronResult::MessageDropped);
             }
@@ -270,9 +288,11 @@ where
     }
 
     fn next_seq_no(&mut self) -> SeqNo {
-        self.current_seq_no = self.current_seq_no.next();
+        let current_seq_no = self.sequence_number();
 
-        self.current_seq_no
+        self.current_view = self.current_view.with_new_seq(current_seq_no.next());
+
+        self.sequence_number()
     }
 
     fn pop_front_decision(&mut self) -> HSDecision<RQ> {
@@ -330,6 +350,16 @@ where
         } else {
             HotIronDecision::decision_info_from_message(seq, message)
         }
+    }
+}
+
+impl<RQ, NT> Orderable for HotStuffProtocol<RQ, NT>
+where
+    RQ: SerMsg,
+    NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
+{
+    fn sequence_number(&self) -> SeqNo {
+        self.current_view.sequence_number()
     }
 }
 
