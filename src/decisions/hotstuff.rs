@@ -264,9 +264,9 @@ where
                 DecisionResult::DuplicateVote(_) => HotIronResult::MessageDropped,
                 DecisionResult::MessageIgnored => HotIronResult::MessageDropped,
                 DecisionResult::MessageQueued => HotIronResult::MessageQueued,
-                DecisionResult::DecisionProgressed(qc, message) => {
+                DecisionResult::DecisionProgressed(qc, node_header, message) => {
                     let decisions =
-                        Self::turn_into_decision(decision.sequence_number(), qc, message);
+                        Self::turn_into_decision(decision.sequence_number(), qc, node_header, message);
 
                     HotIronResult::ProgressedDecision(
                         DecisionsAhead::Ignore,
@@ -275,7 +275,7 @@ where
                 }
                 DecisionResult::Decided(qc, message) => {
                     let decision =
-                        Self::turn_into_decision(decision.sequence_number(), qc, message);
+                        Self::turn_into_decision(decision.sequence_number(), qc, None, message);
 
                     let decisions = self
                         .finalize_decisions()
@@ -313,6 +313,8 @@ where
 
         self.decisions.push_back(decision);
 
+        self.signal_queue.push_signalled(no);
+        
         popped_decision
     }
 
@@ -339,9 +341,17 @@ where
     fn turn_into_decision(
         seq: SeqNo,
         qc: Option<QC>,
+        metadata: Option<DecisionNodeHeader>,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
     ) -> HotIronDecision<RQ> {
-        if let Some(qc) = qc {
+        if let Some(metadata) = metadata {
+            HotIronDecision::decision_info_from_metadata_and_messages(
+                seq,
+                metadata,
+                MaybeVec::from(qc),
+                MaybeVec::from_one(message),
+            )
+        } else if let Some(qc) = qc {
             HotIronDecision::partial_decision_info(
                 seq,
                 MaybeVec::from_one(qc),

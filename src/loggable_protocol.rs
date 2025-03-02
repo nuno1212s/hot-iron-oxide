@@ -102,7 +102,7 @@ where
         additional_data: Vec<DecisionAD<RQ, HotIronOxSer<RQ>>>,
         messages: Vec<StoredMessage<ProtocolMessage<RQ, HotIronOxSer<RQ>>>>,
     ) -> atlas_common::error::Result<PProof<RQ, HotIronOxSer<RQ>, HotIronOxSer<RQ>>> {
-        todo!()
+        Ok(())
     }
 
     fn init_proof_from_scm(
@@ -110,7 +110,7 @@ where
         additional_data: Vec<DecisionAD<RQ, HotIronOxSer<RQ>>>,
         messages: Vec<ShareableConsensusMessage<RQ, HotIronOxSer<RQ>>>,
     ) -> atlas_common::error::Result<PProof<RQ, HotIronOxSer<RQ>, HotIronOxSer<RQ>>> {
-        todo!()
+        Ok(())
     }
 
     fn decompose_proof(

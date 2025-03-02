@@ -7,7 +7,7 @@ use crate::decisions::log::{
 };
 use crate::decisions::msg_queue::HotStuffTBOQueue;
 use crate::decisions::req_aggr::ReqAggregator;
-use crate::decisions::{DecisionHandler, DecisionNode, QCType, QC};
+use crate::decisions::{DecisionHandler, DecisionNode, DecisionNodeHeader, QCType, QC};
 use crate::messages::serialize::HotIronOxSer;
 use crate::messages::{
     HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, VoteMessage, VoteType,
@@ -21,10 +21,10 @@ use atlas_core::messages::{ClientRqInfo, SessionBased};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{BatchedDecision, ProtocolConsensusDecision, ShareableMessage};
+use derive_more::with_trait::Display;
 use getset::{Getters, Setters};
 use std::error::Error;
 use std::sync::Arc;
-use derive_more::with_trait::Display;
 use thiserror::Error;
 use tracing::{error, info, trace};
 
@@ -65,7 +65,11 @@ pub enum DecisionResult<D> {
     DuplicateVote(NodeId),
     MessageIgnored,
     MessageQueued,
-    DecisionProgressed(Option<QC>, ShareableMessage<HotFeOxMsg<D>>),
+    DecisionProgressed(
+        Option<QC>,
+        Option<DecisionNodeHeader>,
+        ShareableMessage<HotFeOxMsg<D>>,
+    ),
     Decided(Option<QC>, ShareableMessage<HotFeOxMsg<D>>),
 }
 
@@ -126,8 +130,11 @@ where
                             &vote_type,
                         );
 
-                        info!("Sending vote message {:?} to view leader {:?}", vote_type, view_leader);
-                        
+                        info!(
+                            "Sending vote message {:?} to view leader {:?}",
+                            vote_type, view_leader
+                        );
+
                         quiet_unwrap!(network.send(
                             HotFeOxMsg::new(
                                 seq,
@@ -223,8 +230,11 @@ where
         CP: CryptoProvider,
     {
         let is_leader = self.is_leader();
-        
-        info!(decision = &(u32::from(self.sequence_number())), "Processing message {:?} with current state {:?}", message, self.current_state);
+
+        info!(
+            decision = &(u32::from(self.sequence_number())),
+            "Processing message {:?} with current state {:?}", message, self.current_state
+        );
 
         match &mut self.current_state {
             DecisionState::Init if self.view.sequence_number() == message.sequence_number() => {
@@ -277,6 +287,8 @@ where
 
                     self.decision_log.set_current_proposal(Some(node.clone()));
 
+                    let decision_header = node.decision_header();
+
                     let new_qc = leader_log
                         .new_view_store()
                         .create_new_qc::<_, CP>(&**crypto, &node.decision_header())?;
@@ -292,9 +304,13 @@ where
 
                     self.current_state = DecisionState::PreCommit(0);
 
-                    Ok(DecisionResult::DecisionProgressed(Some(new_qc), message))
+                    Ok(DecisionResult::DecisionProgressed(
+                        Some(new_qc),
+                        Some(decision_header),
+                        message,
+                    ))
                 } else {
-                    Ok(DecisionResult::DecisionProgressed(None, message))
+                    Ok(DecisionResult::DecisionProgressed(None, None, message))
                 }
             }
             DecisionState::Prepare(_) => {
@@ -331,6 +347,8 @@ where
                         let crypto = crypto.clone();
 
                         let view = self.view.clone();
+                        
+                        let short_node = short_node.clone();
 
                         move || {
                             // Send the message signing processing to the threadpool
@@ -355,7 +373,7 @@ where
 
                     self.current_state = DecisionState::PreCommit(0);
 
-                    Ok(DecisionResult::DecisionProgressed(None, message))
+                    Ok(DecisionResult::DecisionProgressed(None, Some(short_node), message))
                 } else {
                     Ok(DecisionResult::MessageIgnored)
                 }
@@ -416,10 +434,11 @@ where
 
                     Ok(DecisionResult::DecisionProgressed(
                         Some(created_qc),
+                        None,
                         message,
                     ))
                 } else {
-                    Ok(DecisionResult::DecisionProgressed(None, message))
+                    Ok(DecisionResult::DecisionProgressed(None, None, message))
                 }
             }
             DecisionState::PreCommit(_) => {
@@ -475,7 +494,7 @@ where
 
                 self.current_state = DecisionState::Commit(0);
 
-                Ok(DecisionResult::DecisionProgressed(Some(qc), message))
+                Ok(DecisionResult::DecisionProgressed(Some(qc), None, message))
             }
             DecisionState::Commit(received) if is_leader => {
                 let vote_msg = match message.message().message() {
@@ -545,10 +564,11 @@ where
 
                     Ok(DecisionResult::DecisionProgressed(
                         Some(created_qc),
+                        None,
                         message,
                     ))
                 } else {
-                    Ok(DecisionResult::DecisionProgressed(None, message))
+                    Ok(DecisionResult::DecisionProgressed(None, None, message))
                 }
             }
             DecisionState::Commit(_) => {
@@ -602,7 +622,7 @@ where
 
                 self.current_state = DecisionState::Decide(0);
 
-                Ok(DecisionResult::DecisionProgressed(Some(qc), message))
+                Ok(DecisionResult::DecisionProgressed(Some(qc), None, message))
             }
             DecisionState::Decide(received) if is_leader => {
                 let vote_msg = match message.message().message() {
@@ -672,7 +692,7 @@ where
 
                     Ok(DecisionResult::Decided(Some(created_qc), message))
                 } else {
-                    Ok(DecisionResult::DecisionProgressed(None, message))
+                    Ok(DecisionResult::DecisionProgressed(None, None, message))
                 }
             }
             DecisionState::Decide(_) => {

@@ -16,6 +16,7 @@ pub(crate) mod hotstuff;
 mod log;
 mod msg_queue;
 pub(crate) mod req_aggr;
+mod proof;
 
 /// The decision node header
 
@@ -57,7 +58,7 @@ where
 
 impl<D> Default for DecisionHandler<D> {
     fn default() -> Self {
-        Self(Default::default())
+        Self(PhantomData::default())
     }
 }
 
@@ -75,7 +76,7 @@ impl DecisionNodeHeader {
     ) -> Self {
         Self {
             view_no: previous.sequence_number().next(),
-            previous_block: Some(previous.current_block_digest.clone()),
+            previous_block: Some(previous.current_block_digest),
             current_block_digest: digest,
             contained_client_commands: contained_commands,
         }
@@ -98,7 +99,7 @@ impl<D> Orderable for DecisionNode<D> {
 }
 
 impl<D> DecisionNode<D> {
-    pub fn create_leaf(
+    #[must_use] pub fn create_leaf(
         previous_node: &DecisionNodeHeader,
         digest: Digest,
         client_commands: Vec<StoredMessage<D>>,
@@ -113,7 +114,7 @@ impl<D> DecisionNode<D> {
         }
     }
 
-    pub fn create_root_leaf(
+    #[must_use] pub fn create_root_leaf(
         view: &View,
         digest: Digest,
         client_commands: Vec<StoredMessage<D>>,
@@ -167,7 +168,7 @@ pub struct QC {
 }
 
 impl QC {
-    pub fn new(
+    #[must_use] pub fn new(
         qc_type: QCType,
         view_seq: SeqNo,
         decision_node: DecisionNodeHeader,
