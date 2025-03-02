@@ -567,7 +567,7 @@ mod decision_test {
             quorum,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::DecisionProgressed(_, _)) })
+                .filter(|decision| { matches!(decision, DecisionResult::DecisionProgressed(_, _, _)) })
                 .count()
         );
 
@@ -654,7 +654,7 @@ mod decision_test {
             results
                 .iter()
                 .filter(|decision| {
-                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                    matches!(decision, DecisionResult::DecisionProgressed(None, _, _))
                 })
                 .count()
         );
@@ -664,7 +664,7 @@ mod decision_test {
             results
                 .iter()
                 .filter(|decision| {
-                    matches!(decision, DecisionResult::DecisionProgressed(Some(_), _))
+                    matches!(decision, DecisionResult::DecisionProgressed(Some(_), _, _))
                 })
                 .count()
         );
@@ -754,7 +754,7 @@ mod decision_test {
             results
                 .iter()
                 .filter(|decision| {
-                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                    matches!(decision, DecisionResult::DecisionProgressed(None, _, _))
                 })
                 .count()
         );
@@ -764,7 +764,7 @@ mod decision_test {
             results
                 .iter()
                 .filter(|decision| {
-                    matches!(decision, DecisionResult::DecisionProgressed(Some(_), _))
+                    matches!(decision, DecisionResult::DecisionProgressed(Some(_), _, _))
                 })
                 .count()
         );
@@ -856,7 +856,7 @@ mod decision_test {
             results
                 .iter()
                 .filter(|decision| {
-                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                    matches!(decision, DecisionResult::DecisionProgressed(None,_, _))
                 })
                 .count()
         );
@@ -987,7 +987,7 @@ mod decision_test {
             results
                 .iter()
                 .filter(|decision| {
-                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                    matches!(decision, DecisionResult::DecisionProgressed(None,_, _))
                 })
                 .count()
         );
@@ -1117,7 +1117,7 @@ mod decision_test {
             results
                 .iter()
                 .filter(|decision| {
-                    matches!(decision, DecisionResult::DecisionProgressed(None, _))
+                    matches!(decision, DecisionResult::DecisionProgressed(None, _, _))
                 })
                 .count()
         );

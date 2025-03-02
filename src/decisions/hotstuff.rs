@@ -25,7 +25,7 @@ use std::error::Error;
 use std::iter;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 
 /// A data structure to keep track of any consensus instances that have been signalled
 ///
@@ -71,18 +71,18 @@ where
         node: Arc<NT>,
         view: View,
         batch_output: BatchOutput<RQ>,
-    ) -> Result<Self, ()> {
+    ) -> Self {
         let rq_aggr = RequestAggr::new(batch_output);
 
         let mut decisions = VecDeque::new();
 
         decisions.push_back(HSDecision::new(view.clone(), node.id()));
-        
+
         let mut signals: Signals = Default::default();
-        
+
         signals.push_signalled(view.sequence_number());
-        
-        Ok(Self {
+
+        Self {
             node_id: node.id(),
             decisions,
             decision_handler: DecisionHandler::default(),
@@ -91,7 +91,7 @@ where
             current_view: view,
             signal_queue: signals,
             timeouts,
-        })
+        }
     }
 
     pub fn install_seq_no(&mut self, mut seq_no: SeqNo) {
@@ -135,8 +135,7 @@ where
     pub fn can_finalize(&self) -> bool {
         self.decisions
             .front()
-            .map(|d| d.can_be_finalized())
-            .unwrap_or(false)
+            .is_some_and(HSDecision::can_be_finalized)
     }
 
     #[instrument(skip_all)]
@@ -198,7 +197,6 @@ where
 
                             return HotIronPollResult::ReceiveMsg;
                         }
-                        DecisionPollResult::Decided => {}
                         _ => {}
                     }
                 }
@@ -261,12 +259,17 @@ where
             )?;
 
             Ok(match decision_result {
-                DecisionResult::DuplicateVote(_) => HotIronResult::MessageDropped,
-                DecisionResult::MessageIgnored => HotIronResult::MessageDropped,
+                DecisionResult::MessageIgnored | DecisionResult::DuplicateVote(_) => {
+                    HotIronResult::MessageDropped
+                }
                 DecisionResult::MessageQueued => HotIronResult::MessageQueued,
                 DecisionResult::DecisionProgressed(qc, node_header, message) => {
-                    let decisions =
-                        Self::turn_into_decision(decision.sequence_number(), qc, node_header, message);
+                    let decisions = Self::turn_into_decision(
+                        decision.sequence_number(),
+                        qc,
+                        node_header,
+                        message,
+                    );
 
                     HotIronResult::ProgressedDecision(
                         DecisionsAhead::Ignore,
@@ -277,9 +280,8 @@ where
                     let decision =
                         Self::turn_into_decision(decision.sequence_number(), qc, None, message);
 
-                    let decisions = self
-                        .finalize_decisions()
-                        .joining(MaybeVec::from_one(decision));
+                    let decisions =
+                        MaybeVec::from_many(vec![decision]).joining(self.finalize_decisions());
 
                     HotIronResult::ProgressedDecision(DecisionsAhead::Ignore, decisions)
                 }
@@ -303,18 +305,19 @@ where
 
         let no = self.next_seq_no();
 
-        let next_view = self
-            .decisions
-            .back()
-            .map(|d| d.view().with_new_seq(no))
-            .unwrap_or_else(|| popped_decision.view().with_new_seq(no));
+        let next_view = self.decisions.back().map_or_else(
+            || popped_decision.view().with_new_seq(no),
+            |d| d.view().with_new_seq(no),
+        );
 
         let decision = HSDecision::new(next_view, self.node_id);
+
+        info!("Popped decision {:?}, pushing new decision {:?} into the decision queue. Current queue size={}", popped_decision.sequence_number(), decision.sequence_number(), self.decisions.len());
 
         self.decisions.push_back(decision);
 
         self.signal_queue.push_signalled(no);
-        
+
         popped_decision
     }
 
@@ -326,6 +329,8 @@ where
 
         while self.can_finalize() {
             let decision = self.pop_front_decision();
+
+            info!("Finalizing decision {:?}", decision.sequence_number());
 
             let decision = decision.finalize_decision();
 

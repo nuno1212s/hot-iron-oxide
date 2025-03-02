@@ -153,7 +153,7 @@ where
     ) -> Result<HotIronResult<RQ>> {
         self.hot_stuff_protocol
             .process_message::<CR, AtlasTHCryptoProvider>(message, &self.quorum_information)
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     fn install_seq_no(&mut self, seq_no: SeqNo) -> Result<()> {
@@ -182,8 +182,7 @@ where
 
         let view = View::new_from_quorum(SeqNo::ZERO, quorum);
         
-        let hot_stuff_protocol = HotStuffProtocol::new(timeout, node.clone(), view, batch_output)
-            .map_err(|_e| anyhow::anyhow!("Error while initializing hot stuff protocol"))?;
+        let hot_stuff_protocol = HotStuffProtocol::new(timeout, node.clone(), view, batch_output);
 
         Ok(HotIron {
             node_id,
