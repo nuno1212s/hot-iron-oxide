@@ -413,7 +413,7 @@ mod decision_test {
         target: NodeId,
         from: &[NodeId],
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &DecisionHandler<BlankProtocol>,
+        decision_handler: &mut DecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>>
     where
         F: Fn(NodeId) -> HotFeOxMsg<BlankProtocol>,

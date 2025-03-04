@@ -333,7 +333,7 @@ impl NewViewStore {
         let (qc, votes) = self
             .new_view
             .iter()
-            .max_by_key(|(qc, _)| qc.as_ref().map(|f| f.sequence_number()))
+            .max_by_key(|(qc, _)| qc.as_ref().map(Orderable::sequence_number))
             .ok_or(NewViewGenerateError::NotEnoughVotes)?;
 
         let votes = votes
@@ -347,14 +347,14 @@ impl NewViewStore {
         if let Some(qc) = qc {
             Ok(QC::new(
                 QCType::PrepareVote,
-                qc.view_seq(),
+                qc.view_seq().next(),
                 *decision_node_header,
                 combined_signature,
             ))
         } else {
             Ok(QC::new(
                 QCType::PrepareVote,
-                SeqNo::ONE,
+                SeqNo::ZERO,
                 *decision_node_header,
                 combined_signature,
             ))
