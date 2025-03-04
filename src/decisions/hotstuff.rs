@@ -4,7 +4,6 @@ use crate::decisions::req_aggr::RequestAggr;
 use crate::decisions::{DecisionHandler, DecisionNodeHeader, QC};
 use crate::messages::serialize::HotIronOxSer;
 use crate::messages::HotFeOxMsg;
-use crate::view::leader_allocation::RoundRobinLA;
 use crate::view::View;
 use crate::{HotIronDecision, HotIronPollResult, HotIronResult};
 use atlas_common::maybe_vec::MaybeVec;
@@ -47,7 +46,7 @@ where
     /// The decision store
     decisions: VecDeque<HSDecision<RQ>>,
 
-    decision_handler: DecisionHandler<RQ>,
+    decision_handler: DecisionHandler,
 
     request_aggr: Arc<RequestAggr<RQ>>,
 
@@ -253,7 +252,7 @@ where
             let decision_result = decision.process_message::<_, _, CP, _>(
                 message,
                 &self.node,
-                &self.decision_handler,
+                &mut self.decision_handler,
                 crypto,
                 &self.request_aggr,
             )?;
@@ -312,7 +311,7 @@ where
 
         let decision = HSDecision::new(next_view, self.node_id);
 
-        info!("Popped decision {:?}, pushing new decision {:?} into the decision queue. Current queue size={}", popped_decision.sequence_number(), decision.sequence_number(), self.decisions.len());
+        debug!("Popped decision {:?}, pushing new decision {:?} into the decision queue. Current queue size={}", popped_decision.sequence_number(), decision.sequence_number(), self.decisions.len());
 
         self.decisions.push_back(decision);
 
@@ -329,9 +328,7 @@ where
 
         while self.can_finalize() {
             let decision = self.pop_front_decision();
-
-            info!("Finalizing decision {:?}", decision.sequence_number());
-
+            
             let decision = decision.finalize_decision();
 
             decisions.push(HotIronDecision::completed_decision(

@@ -2,14 +2,13 @@ use crate::view::View;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use getset::{CopyGetters, Getters};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
-use std::marker::PhantomData;
+use tracing::debug;
 
 pub(crate) mod decision;
 pub(crate) mod hotstuff;
@@ -41,24 +40,29 @@ pub struct DecisionNode<D> {
 
 pub struct DecisionTree {}
 
-pub struct DecisionHandler<D>(PhantomData<fn() -> D>);
+#[derive(Default)]
+pub struct DecisionHandler {
+    latest_qc: Option<QC>,
+}
 
-impl<D> DecisionHandler<D>
-where
-    D: SerMsg,
+impl DecisionHandler
 {
-    fn safe_node(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
-        true
+    fn safe_node<D>(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
+        match (node.decision_header.previous_block, self.latest_qc()) {
+            (Some(prev), Some(latest_qc)) => {
+                prev == latest_qc.decision_node.current_block_digest && qc.view_seq() > latest_qc.view_seq()
+            }
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     fn latest_qc(&self) -> Option<QC> {
-        None
+        self.latest_qc.clone()
     }
-}
 
-impl<D> Default for DecisionHandler<D> {
-    fn default() -> Self {
-        Self(PhantomData::default())
+    fn install_latest_qc(&mut self, qc: QC) {
+        self.latest_qc = Some(qc);
     }
 }
 
@@ -209,7 +213,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            decision_header: self.decision_header.clone(),
+            decision_header: self.decision_header,
             client_commands: self.client_commands.clone(),
         }
     }

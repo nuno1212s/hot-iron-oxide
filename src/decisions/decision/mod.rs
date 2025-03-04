@@ -26,7 +26,7 @@ use getset::{Getters, Setters};
 use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 #[derive(Debug, Display)]
 pub enum DecisionState {
@@ -104,7 +104,7 @@ where
     pub fn poll<NT, CR, CP>(
         &mut self,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
+        dec_handler: &DecisionHandler,
         crypto_info: &Arc<CR>,
     ) -> DecisionPollResult<RQ>
     where
@@ -198,7 +198,7 @@ where
 
     /// Queue a message into this decision, so it can be polled later
     pub(super) fn queue(&mut self, message: ShareableMessage<HotFeOxMsg<RQ>>) {
-        self.decision_queue.queue_message(message)
+        self.decision_queue.queue_message(message);
     }
 
     /// Are we the leader of the current view
@@ -219,7 +219,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
+        dec_handler: &mut DecisionHandler,
         crypto: &Arc<CR>,
         req_aggr: &Arc<RQA>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
@@ -245,11 +245,7 @@ where
             DecisionState::Init | DecisionState::Finally => Ok(DecisionResult::MessageIgnored),
             DecisionState::Prepare(_) if is_leader => self
                 .process_message_prepare_leader::<NT, CR, CP, RQA>(
-                    message,
-                    network,
-                    dec_handler,
-                    crypto,
-                    req_aggr,
+                    message, network, crypto, req_aggr,
                 ),
             DecisionState::Prepare(_) => Ok(self.process_message_prepare::<NT, CR, CP>(
                 message,
@@ -257,35 +253,23 @@ where
                 dec_handler,
                 crypto,
             )),
-            DecisionState::PreCommit(_) if is_leader => self
-                .process_message_pre_commit_leader::<NT, CR, CP>(
-                    message,
-                    network,
-                    dec_handler,
-                    crypto,
-                ),
-            DecisionState::PreCommit(_) => Ok(self.process_message_pre_commit::<NT, CR, CP>(
-                message,
-                network,
-                dec_handler,
-                crypto,
-            )),
-            DecisionState::Commit(_) if is_leader => self
-                .process_message_commit_leader::<NT, CR, CP>(message, network, dec_handler, crypto),
-            DecisionState::Commit(_) => Ok(self.process_message_commit::<NT, CR, CP>(
-                message,
-                network,
-                dec_handler,
-                crypto,
-            )),
-            DecisionState::Decide(_) if is_leader => self
-                .process_message_decide_leader::<NT, CR, CP>(message, network, dec_handler, crypto),
-            DecisionState::Decide(_) => Ok(self.process_message_decide::<NT, CR, CP>(
-                message,
-                network,
-                dec_handler,
-                crypto,
-            )),
+            DecisionState::PreCommit(_) if is_leader => {
+                self.process_message_pre_commit_leader::<NT, CR, CP>(message, network, crypto)
+            }
+            DecisionState::PreCommit(_) => {
+                Ok(self.process_message_pre_commit::<NT, CR, CP>(message, network, crypto))
+            }
+            DecisionState::Commit(_) if is_leader => {
+                self.process_message_commit_leader::<NT, CR, CP>(message, network, crypto)
+            }
+            DecisionState::Commit(_) => {
+                Ok(self.process_message_commit::<NT, CR, CP>(message, network, crypto))
+            }
+            DecisionState::Decide(_) if is_leader => 
+                self.process_message_decide_leader::<NT, CR, CP>(message, network, dec_handler, crypto),
+            DecisionState::Decide(_) => {
+                Ok(self.process_message_decide::<NT, CR, CP>(message, dec_handler))
+            }
         }
     }
 
@@ -293,7 +277,6 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
         crypto: &Arc<CR>,
         req_aggr: &Arc<RQA>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
@@ -362,7 +345,11 @@ where
 
             let _ = network.broadcast(
                 HotFeOxMsg::new(self.view.sequence_number(), msg),
-                self.view.quorum_members().clone().into_iter(),
+                self.view
+                    .quorum_members()
+                    .clone()
+                    .into_iter()
+                    .filter(|node| *node != self.node_id),
             );
 
             self.current_state = DecisionState::PreCommit(0);
@@ -381,7 +368,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
+        dec_handler: &DecisionHandler,
         crypto: &Arc<CR>,
     ) -> DecisionResult<RQ>
     where
@@ -410,7 +397,7 @@ where
             }
         };
 
-        if dec_handler.safe_node(&node, &qc) && node.extends_from(&qc.decision_node()) {
+        if dec_handler.safe_node(&node, &qc) {
             let short_node = node.decision_header();
 
             self.decision_log.set_current_proposal(Some(node.clone()));
@@ -449,6 +436,13 @@ where
 
             DecisionResult::DecisionProgressed(None, Some(short_node), message)
         } else {
+            debug!(
+                "Node {:?}, QC {:?} does not extend from {:?}",
+                node,
+                qc,
+                dec_handler.latest_qc()
+            );
+
             DecisionResult::MessageIgnored
         }
     }
@@ -457,7 +451,6 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
         crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
@@ -532,7 +525,6 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
         crypto: &Arc<CR>,
     ) -> DecisionResult<RQ>
     where
@@ -598,7 +590,6 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
         crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
@@ -683,7 +674,6 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
         crypto: &Arc<CR>,
     ) -> DecisionResult<RQ>
     where
@@ -747,7 +737,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
+        dec_handler: &mut DecisionHandler,
         crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
@@ -814,6 +804,8 @@ where
 
             self.current_state = DecisionState::Finally;
 
+            dec_handler.install_latest_qc(created_qc.clone());
+
             Ok(DecisionResult::Decided(Some(created_qc), message))
         } else {
             Ok(DecisionResult::DecisionProgressed(None, None, message))
@@ -823,9 +815,7 @@ where
     fn process_message_decide<NT, CR, CP>(
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
-        network: &Arc<NT>,
-        dec_handler: &DecisionHandler<RQ>,
-        crypto: &Arc<CR>,
+        dec_handler: &mut DecisionHandler,
     ) -> DecisionResult<RQ>
     where
         NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
@@ -846,6 +836,8 @@ where
         };
 
         self.current_state = DecisionState::Finally;
+
+        dec_handler.install_latest_qc(qc.clone());
 
         DecisionResult::Decided(Some(qc), message)
     }
