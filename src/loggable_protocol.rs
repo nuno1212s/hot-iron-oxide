@@ -1,5 +1,6 @@
 use crate::crypto::CryptoInformationProvider;
 use crate::messages::serialize::HotIronOxSer;
+use crate::messages::{HotFeOxMsgType, ProposalType, VoteType};
 use crate::HotIron;
 use crate::SerMsg;
 use atlas_communication::message::StoredMessage;
@@ -18,7 +19,6 @@ use atlas_core::ordering_protocol::{
     ShareableConsensusMessage,
 };
 use std::sync::Arc;
-use crate::messages::{HotFeOxMsgType, ProposalType, VoteType};
 
 impl<RQ, NT, CR> LoggableOrderProtocol<RQ> for HotIron<RQ, NT, CR>
 where
@@ -62,38 +62,18 @@ where
         msg: &ProtocolMessage<RQ, HotIronOxSer<RQ>>,
     ) -> atlas_common::error::Result<&'static str> {
         match msg.message() {
-            HotFeOxMsgType::Proposal(msg) => {
-                match msg.proposal_type() {
-                    ProposalType::Prepare(_, _) => {
-                        Ok(PROPOSAL_PREPARE)
-                    }
-                    ProposalType::PreCommit(_) => {
-                        Ok(PROPOSAL_PRE_COMMIT)
-                    }
-                    ProposalType::Commit(_) => {
-                        Ok(PROPOSAL_COMMIT)
-                    }
-                    ProposalType::Decide(_) => {
-                        Ok(PROPOSAL_DECIDE)
-                    }
-                }
-            }
-            HotFeOxMsgType::Vote(msg) => {
-                match msg.vote_type() {
-                    VoteType::NewView(_) => {
-                        Ok(VOTE_NEW_VIEW)
-                    }
-                    VoteType::PrepareVote(_) => {
-                        Ok(VOTE_PREPARE)
-                    }
-                    VoteType::PreCommitVote(_) => {
-                        Ok(VOTE_PRE_COMMIT)
-                    }
-                    VoteType::CommitVote(_) => {
-                        Ok(VOTE_COMMIT)
-                    }
-                }
-            }
+            HotFeOxMsgType::Proposal(msg) => match msg.proposal_type() {
+                ProposalType::Prepare(_, _) => Ok(PROPOSAL_PREPARE),
+                ProposalType::PreCommit(_) => Ok(PROPOSAL_PRE_COMMIT),
+                ProposalType::Commit(_) => Ok(PROPOSAL_COMMIT),
+                ProposalType::Decide(_) => Ok(PROPOSAL_DECIDE),
+            },
+            HotFeOxMsgType::Vote(msg) => match msg.vote_type() {
+                VoteType::NewView(_) => Ok(VOTE_NEW_VIEW),
+                VoteType::PrepareVote(_) => Ok(VOTE_PREPARE),
+                VoteType::PreCommitVote(_) => Ok(VOTE_PRE_COMMIT),
+                VoteType::CommitVote(_) => Ok(VOTE_COMMIT),
+            },
         }
     }
 

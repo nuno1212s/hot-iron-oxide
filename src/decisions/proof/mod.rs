@@ -1,4 +1,1 @@
-
-pub struct Proof {
-    
-}
+pub struct Proof {}

@@ -2,11 +2,9 @@ pub mod leader_allocation;
 pub mod serialization;
 
 use crate::view::leader_allocation::{LeaderAllocator, RoundRobinLA};
-use crate::HotIron;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::ordering_protocol::OrderProtocolTolerance;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +31,7 @@ impl View {
     pub fn new_from_quorum(seq_no: SeqNo, members: Vec<NodeId>) -> Self {
         Self::new_from_quorum_with_leader_allocator::<RoundRobinLA>(seq_no, members)
     }
-    
+
     fn new_from_quorum_with_leader_allocator<L>(seq_no: SeqNo, members: Vec<NodeId>) -> Self
     where
         L: LeaderAllocator,
@@ -44,8 +42,7 @@ impl View {
         Self::new(seq_no, members, leader, f)
     }
 
-    pub fn with_new_seq(&self, seq: SeqNo) -> Self
-    {
+    pub fn with_new_seq(&self, seq: SeqNo) -> Self {
         Self::new_from_quorum(seq, self.members.clone())
     }
 }
@@ -77,4 +74,3 @@ impl NetworkView for View {
         self.members.len()
     }
 }
-

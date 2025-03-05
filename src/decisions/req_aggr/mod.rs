@@ -2,7 +2,6 @@ use atlas_common::channel::RecvError;
 use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_core::messages::{RequestMessage, StoredRequestMessage};
 use atlas_core::request_pre_processing::BatchOutput;
 use std::sync::{Arc, Mutex};
 use tracing::error;

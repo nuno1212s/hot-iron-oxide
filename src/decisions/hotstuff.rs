@@ -13,7 +13,7 @@ use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{
-    Decision, DecisionsAhead, ProtocolConsensusDecision, ShareableMessage,
+    DecisionsAhead, ShareableMessage,
 };
 use atlas_core::request_pre_processing::BatchOutput;
 use atlas_core::timeouts::timeout::TimeoutModHandle;
@@ -21,10 +21,9 @@ use either::Either;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, VecDeque};
 use std::error::Error;
-use std::iter;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, info, instrument};
+use tracing::{debug, instrument};
 
 /// A data structure to keep track of any consensus instances that have been signalled
 ///
@@ -328,7 +327,7 @@ where
 
         while self.can_finalize() {
             let decision = self.pop_front_decision();
-            
+
             let decision = decision.finalize_decision();
 
             decisions.push(HotIronDecision::completed_decision(

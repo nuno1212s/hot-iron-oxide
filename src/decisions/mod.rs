@@ -8,14 +8,13 @@ use getset::{CopyGetters, Getters};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
-use tracing::debug;
 
 pub(crate) mod decision;
 pub(crate) mod hotstuff;
 mod log;
 mod msg_queue;
-pub(crate) mod req_aggr;
 mod proof;
+pub(crate) mod req_aggr;
 
 /// The decision node header
 
@@ -45,12 +44,12 @@ pub struct DecisionHandler {
     latest_qc: Option<QC>,
 }
 
-impl DecisionHandler
-{
+impl DecisionHandler {
     fn safe_node<D>(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
         match (node.decision_header.previous_block, self.latest_qc()) {
             (Some(prev), Some(latest_qc)) => {
-                prev == latest_qc.decision_node.current_block_digest && qc.view_seq() > latest_qc.view_seq()
+                prev == latest_qc.decision_node.current_block_digest
+                    && qc.view_seq() > latest_qc.view_seq()
             }
             (None, None) => true,
             _ => false,
@@ -103,7 +102,8 @@ impl<D> Orderable for DecisionNode<D> {
 }
 
 impl<D> DecisionNode<D> {
-    #[must_use] pub fn create_leaf(
+    #[must_use]
+    pub fn create_leaf(
         previous_node: &DecisionNodeHeader,
         digest: Digest,
         client_commands: Vec<StoredMessage<D>>,
@@ -118,7 +118,8 @@ impl<D> DecisionNode<D> {
         }
     }
 
-    #[must_use] pub fn create_root_leaf(
+    #[must_use]
+    pub fn create_root_leaf(
         view: &View,
         digest: Digest,
         client_commands: Vec<StoredMessage<D>>,
@@ -172,7 +173,8 @@ pub struct QC {
 }
 
 impl QC {
-    #[must_use] pub fn new(
+    #[must_use]
+    pub fn new(
         qc_type: QCType,
         view_seq: SeqNo,
         decision_node: DecisionNodeHeader,
@@ -227,7 +229,11 @@ impl<D> From<DecisionNode<D>> for (DecisionNodeHeader, Vec<StoredMessage<D>>) {
 
 impl Debug for QC {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "QC: view_seq: {:?}, decision_node: {:?}", self.view_seq, self.decision_node)
+        write!(
+            f,
+            "QC: view_seq: {:?}, decision_node: {:?}",
+            self.view_seq, self.decision_node
+        )
     }
 }
 

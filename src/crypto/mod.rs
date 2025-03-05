@@ -2,16 +2,13 @@ mod test;
 
 use crate::messages::serialize::serialize_vote_message;
 use crate::messages::VoteType;
-use crate::HotIron;
 use atlas_common::crypto::threshold_crypto::{
     CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PrivateKeySet,
     PublicKeyPart, PublicKeySet, VerifySignatureError,
 };
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use atlas_core::ordering_protocol::OrderProtocolTolerance;
 use getset::Getters;
-use serde::{Deserialize, Serialize};
 use std::error::Error;
 use thiserror::Error;
 

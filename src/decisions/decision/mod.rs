@@ -28,7 +28,7 @@ use getset::{Getters, Setters};
 use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 #[derive(Debug, Display)]
 pub enum DecisionState {
@@ -323,6 +323,9 @@ where
             }
         };
 
+        self.consensus_metric
+            .as_leader()
+            .register_new_view_received();
         let leader_log = self.msg_decision_log.as_mut_leader().unwrap();
 
         *received += 1;
@@ -422,8 +425,6 @@ where
 
                 let view = self.view.clone();
 
-                let short_node = short_node.clone();
-
                 move || {
                     // Send the message signing processing to the threadpool
                     let prepare_vote = VoteType::PrepareVote(short_node);
@@ -498,6 +499,7 @@ where
 
         *received += 1;
 
+        self.consensus_metric.as_leader().register_prepare_vote();
         let leader_log = self
             .msg_decision_log
             .as_mut_leader()
@@ -600,7 +602,7 @@ where
 
         self.consensus_metric
             .as_replica()
-            .register_pre_commit_received();
+            .register_pre_commit_proposal();
         self.current_state = DecisionState::Commit(0);
 
         DecisionResult::DecisionProgressed(Some(qc), None, message)
@@ -645,6 +647,7 @@ where
 
         *received += 1;
 
+        self.consensus_metric.as_leader().register_pre_commit_vote();
         let leader_log = self
             .msg_decision_log
             .as_mut_leader()
@@ -751,7 +754,7 @@ where
 
         self.consensus_metric
             .as_replica()
-            .register_commit_received();
+            .register_commit_proposal();
         self.current_state = DecisionState::Decide(0);
 
         DecisionResult::DecisionProgressed(Some(qc), None, message)
@@ -793,6 +796,7 @@ where
 
         *received += 1;
 
+        self.consensus_metric.as_leader().register_commit_vote();
         let leader_log = self
             .msg_decision_log
             .as_mut_leader()
@@ -881,7 +885,7 @@ where
         } else {
             self.consensus_metric.as_replica().register_decided();
         }
-        
+
         let decision_node = self
             .decision_log
             .into_current_proposal()

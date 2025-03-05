@@ -118,7 +118,6 @@ impl From<VoteMessage> for DecisionNodeHeader {
 
 impl<D> Debug for HotFeOxMsg<D> {
     fn fmt(&self, writer: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        
         write!(writer, "HotStuffMsg {{ {:?} ", self.curr_view)?;
 
         match &self.message {
@@ -129,7 +128,6 @@ impl<D> Debug for HotFeOxMsg<D> {
                 write!(writer, "Vote {{ {:?} }}", msg)
             }
         }
-        
     }
 }
 

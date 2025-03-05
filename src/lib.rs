@@ -13,19 +13,23 @@ use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::networking::{
     NetworkedOrderProtocolInitializer, OrderProtocolSendNode,
 };
-use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage, ShareableConsensusMessage};
+use atlas_core::ordering_protocol::{
+    Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult,
+    OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol,
+    ProtocolMessage, ShareableConsensusMessage,
+};
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
 use std::sync::Arc;
-use tracing::{info, trace};
+use tracing::trace;
 
 pub mod config;
 pub mod crypto;
 pub mod decisions;
 mod loggable_protocol;
 pub mod messages;
-pub mod view;
 pub mod metric;
+pub mod view;
 
 lazy_static! {
     static ref MOD_NAME: Arc<str> = Arc::from("HOT-IRON");
@@ -181,7 +185,7 @@ where
         let HotIronInitConfig { quorum_info } = config;
 
         let view = View::new_from_quorum(SeqNo::ZERO, quorum);
-        
+
         let hot_stuff_protocol = HotStuffProtocol::new(timeout, node.clone(), view, batch_output);
 
         Ok(HotIron {
@@ -205,7 +209,10 @@ where
         self.hot_stuff_protocol.view().clone()
     }
 
-    fn install_view(&mut self, view: atlas_core::ordering_protocol::View<Self::PermissionedSerialization>) {
+    fn install_view(
+        &mut self,
+        view: atlas_core::ordering_protocol::View<Self::PermissionedSerialization>,
+    ) {
         self.hot_stuff_protocol.install_view(view);
     }
 }
