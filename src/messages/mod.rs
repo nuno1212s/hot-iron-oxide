@@ -64,7 +64,7 @@ impl<D> Orderable for HotFeOxMsg<D> {
 }
 
 impl<D> HotFeOxMsg<D> {
-    pub fn new(view: SeqNo, message: HotFeOxMsgType<D>) -> Self {
+    #[must_use] pub fn new(view: SeqNo, message: HotFeOxMsgType<D>) -> Self {
         Self {
             curr_view: view,
             message,
@@ -79,7 +79,7 @@ impl<D> From<HotFeOxMsg<D>> for HotFeOxMsgType<D> {
 }
 
 impl<D> ProposalMessage<D> {
-    pub fn new(proposal_type: ProposalType<D>) -> Self {
+    #[must_use] pub fn new(proposal_type: ProposalType<D>) -> Self {
         Self { proposal_type }
     }
 }
@@ -91,7 +91,7 @@ impl<D> From<ProposalMessage<D>> for ProposalType<D> {
 }
 
 impl VoteMessage {
-    pub fn new(vote_type: VoteType, sig: PartialSignature) -> Self {
+    #[must_use] pub fn new(vote_type: VoteType, sig: PartialSignature) -> Self {
         Self {
             vote_type,
             signature: sig,
@@ -122,10 +122,10 @@ impl<D> Debug for HotFeOxMsg<D> {
 
         match &self.message {
             HotFeOxMsgType::Proposal(msg) => {
-                write!(writer, "Proposal {{ {:?} }}", msg)
+                write!(writer, "Proposal {{ {msg:?} }}")
             }
             HotFeOxMsgType::Vote(msg) => {
-                write!(writer, "Vote {{ {:?} }}", msg)
+                write!(writer, "Vote {{ {msg:?} }}")
             }
         }
     }
@@ -147,16 +147,16 @@ impl<D> Debug for ProposalType<D> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ProposalType::Prepare(dn, qc) => {
-                write!(f, "Prepare {{ {:?}, {:?} }}", dn, qc)
+                write!(f, "Prepare {{ {dn:?}, {qc:?} }}")
             }
             ProposalType::PreCommit(qc) => {
-                write!(f, "PreCommit {{ {:?} }}", qc)
+                write!(f, "PreCommit {{ {qc:?} }}")
             }
             ProposalType::Commit(qc) => {
-                write!(f, "Commit {{ {:?} }}", qc)
+                write!(f, "Commit {{ {qc:?} }}")
             }
             ProposalType::Decide(qc) => {
-                write!(f, "Decide {{ {:?} }}", qc)
+                write!(f, "Decide {{ {qc:?} }}")
             }
         }
     }

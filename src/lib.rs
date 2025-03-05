@@ -30,6 +30,7 @@ mod loggable_protocol;
 pub mod messages;
 pub mod metric;
 pub mod view;
+mod chained;
 
 lazy_static! {
     static ref MOD_NAME: Arc<str> = Arc::from("HOT-IRON");

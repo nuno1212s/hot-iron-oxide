@@ -39,6 +39,8 @@ pub trait CryptoPartialSigProvider: Sync {
     where
         CR: CryptoInformationProvider;
 
+    /// # [Errors]
+    /// Will throw errors related to the signature verification
     fn verify_partial_signature_by_node<CR>(
         crypto_info: &CR,
         node_index: usize,
@@ -54,6 +56,8 @@ pub trait CryptoSignatureCombiner: Sync {
 
     type VerificationError: Error + Send + Sync;
 
+    /// # [Errors]
+    /// Will throw errors related to the signature combination
     fn combine_signatures<CR>(
         crypto_info: &CR,
         signature: &[(NodeId, PartialSignature)],
@@ -61,6 +65,8 @@ pub trait CryptoSignatureCombiner: Sync {
     where
         CR: CryptoInformationProvider;
 
+    /// # [Errors]
+    /// Will throw errors related to the signature verification
     fn verify_combined_signature<CR>(
         crypto_info: &CR,
         signature: &CombinedSignature,
@@ -176,7 +182,7 @@ impl CryptoInformationProvider for QuorumInfo {
 }
 
 impl QuorumInfo {
-    pub fn initialize(f: usize) -> Vec<Self> {
+    #[must_use] pub fn initialize(f: usize) -> Vec<Self> {
         let key_set = PrivateKeySet::gen_random(2 * f);
 
         let n = 3 * f + 1;
@@ -197,4 +203,13 @@ impl QuorumInfo {
             })
             .collect()
     }
+    
+    #[must_use] pub fn new(private_key_part: PrivateKeyPart, public_key_part: PublicKeyPart, public_key_set: PublicKeySet) -> Self {
+        Self {
+            our_priv_key: private_key_part,
+            our_pub_key: public_key_part,
+            pub_key: public_key_set,
+        }
+    }
+    
 }
