@@ -2,7 +2,8 @@ mod test;
 
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
 use crate::decisions::log::{
-    DecisionLog, DecisionLogType, MsgDecisionLog, NewViewAcceptError, NewViewGenerateError,
+    DecisionLog, DecisionLogType, LeaderDecisionLog, MsgDecisionLog, MsgLeaderDecisionLog,
+    MsgReplicaDecisionLog, NewViewAcceptError, NewViewGenerateError, ReplicaDecisionLog,
     VoteAcceptError, VoteStoreError,
 };
 use crate::decisions::msg_queue::HotStuffTBOQueue;
@@ -12,6 +13,7 @@ use crate::messages::serialize::HotIronOxSer;
 use crate::messages::{
     HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, VoteMessage, VoteType,
 };
+use crate::metric::ConsensusDecisionMetric;
 use crate::view::View;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -50,6 +52,8 @@ pub struct HSDecision<D> {
     msg_decision_log: MsgDecisionLog,
     #[getset(get = "pub (super)")]
     decision_log: DecisionLog<D>,
+    #[get = "pub(crate)"]
+    consensus_metric: ConsensusDecisionMetric,
 }
 
 /// The result of the poll operation on the decision
@@ -79,15 +83,21 @@ where
 {
     pub fn new(view: View, node_id: NodeId) -> Self {
         let msg_decision_log = if view.primary() == node_id {
-            MsgDecisionLog::Leader(Default::default())
+            MsgDecisionLog::Leader(MsgLeaderDecisionLog::default())
         } else {
-            MsgDecisionLog::Replica(Default::default())
+            MsgDecisionLog::Replica(MsgReplicaDecisionLog::default())
         };
 
         let decision_log_type = if view.primary() == node_id {
-            DecisionLogType::Leader(Default::default())
+            DecisionLogType::Leader(LeaderDecisionLog::default())
         } else {
-            DecisionLogType::Replica(Default::default())
+            DecisionLogType::Replica(ReplicaDecisionLog::default())
+        };
+
+        let consensus_metric = if view.primary() == node_id {
+            ConsensusDecisionMetric::leader()
+        } else {
+            ConsensusDecisionMetric::replica()
         };
 
         HSDecision {
@@ -97,6 +107,7 @@ where
             decision_queue: HotStuffTBOQueue::default(),
             msg_decision_log,
             decision_log: DecisionLog::new(decision_log_type),
+            consensus_metric,
         }
     }
 
@@ -146,6 +157,7 @@ where
                     }
                 });
 
+                self.consensus_metric.as_replica().register_new_view_sent();
                 self.current_state = DecisionState::Prepare(0);
 
                 DecisionPollResult::Recv
@@ -265,8 +277,8 @@ where
             DecisionState::Commit(_) => {
                 Ok(self.process_message_commit::<NT, CR, CP>(message, network, crypto))
             }
-            DecisionState::Decide(_) if is_leader => 
-                self.process_message_decide_leader::<NT, CR, CP>(message, network, dec_handler, crypto),
+            DecisionState::Decide(_) if is_leader => self
+                .process_message_decide_leader::<NT, CR, CP>(message, network, dec_handler, crypto),
             DecisionState::Decide(_) => {
                 Ok(self.process_message_decide::<NT, CR, CP>(message, dec_handler))
             }
@@ -352,6 +364,7 @@ where
                     .filter(|node| *node != self.node_id),
             );
 
+            self.consensus_metric.as_leader().register_prepare_sent();
             self.current_state = DecisionState::PreCommit(0);
 
             Ok(DecisionResult::DecisionProgressed(
@@ -432,6 +445,9 @@ where
                 }
             });
 
+            self.consensus_metric
+                .as_replica()
+                .register_prepare_received();
             self.current_state = DecisionState::PreCommit(0);
 
             DecisionResult::DecisionProgressed(None, Some(short_node), message)
@@ -509,6 +525,7 @@ where
 
             let _ = network.broadcast(msg, view_members.into_iter());
 
+            self.consensus_metric.as_leader().register_pre_commit_sent();
             self.current_state = DecisionState::Commit(0);
 
             Ok(DecisionResult::DecisionProgressed(
@@ -581,6 +598,9 @@ where
             }
         });
 
+        self.consensus_metric
+            .as_replica()
+            .register_pre_commit_received();
         self.current_state = DecisionState::Commit(0);
 
         DecisionResult::DecisionProgressed(Some(qc), None, message)
@@ -658,6 +678,7 @@ where
                 }
             });
 
+            self.consensus_metric.as_leader().register_commit_sent();
             self.current_state = DecisionState::Decide(0);
 
             Ok(DecisionResult::DecisionProgressed(
@@ -728,6 +749,9 @@ where
             }
         });
 
+        self.consensus_metric
+            .as_replica()
+            .register_commit_received();
         self.current_state = DecisionState::Decide(0);
 
         DecisionResult::DecisionProgressed(Some(qc), None, message)
@@ -802,6 +826,7 @@ where
                 }
             });
 
+            self.consensus_metric.as_leader().register_decided_sent();
             self.current_state = DecisionState::Finally;
 
             dec_handler.install_latest_qc(created_qc.clone());
@@ -835,6 +860,9 @@ where
             _ => return DecisionResult::MessageIgnored,
         };
 
+        self.consensus_metric
+            .as_replica()
+            .register_decided_received();
         self.current_state = DecisionState::Finally;
 
         dec_handler.install_latest_qc(qc.clone());
@@ -842,12 +870,18 @@ where
         DecisionResult::Decided(Some(qc), message)
     }
 
-    pub fn finalize_decision(self) -> ProtocolConsensusDecision<RQ>
+    pub fn finalize_decision(mut self) -> ProtocolConsensusDecision<RQ>
     where
         RQ: SerMsg + SessionBased,
     {
         let seq = self.sequence_number();
 
+        if self.is_leader() {
+            self.consensus_metric.as_leader().register_decided();
+        } else {
+            self.consensus_metric.as_replica().register_decided();
+        }
+        
         let decision_node = self
             .decision_log
             .into_current_proposal()
