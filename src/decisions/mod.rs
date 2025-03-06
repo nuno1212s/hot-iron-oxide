@@ -39,9 +39,13 @@ pub struct DecisionNode<D> {
 
 pub struct DecisionTree {}
 
-#[derive(Default)]
+#[derive(Default, Getters)]
 pub struct DecisionHandler {
     latest_qc: Option<QC>,
+    #[getset(get = "pub")]
+    latest_prepare_qc: Option<QC>,
+    #[getset(get = "pub")]
+    latest_locked_qc: Option<QC>
 }
 
 impl DecisionHandler {
@@ -62,6 +66,14 @@ impl DecisionHandler {
 
     fn install_latest_qc(&mut self, qc: QC) {
         self.latest_qc = Some(qc);
+    }
+    
+    fn install_latest_prepare_qc(&mut self, qc: QC) {
+        self.latest_prepare_qc = Some(qc);
+    }
+    
+    fn install_latest_locked_qc(&mut self, qc: QC) {
+        self.latest_locked_qc = Some(qc);
     }
 }
 
