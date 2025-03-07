@@ -505,7 +505,9 @@ where
             .as_mut_leader()
             .expect("Leader decision log not available");
 
-        leader_log.accept_vote(message.header().from(), vote_msg)?;
+        if !leader_log.accept_vote(message.header().from(), vote_msg)? {
+            return Ok(DecisionResult::DuplicateVote(message.header().from()));
+        }
 
         if *received >= self.view.quorum() {
             let created_qc =
@@ -653,7 +655,9 @@ where
             .as_mut_leader()
             .expect("Leader decision log not available");
 
-        leader_log.accept_vote(message.header().from(), vote_msg)?;
+        if !leader_log.accept_vote(message.header().from(), vote_msg)? {
+            return Ok(DecisionResult::DuplicateVote(message.header().from()));
+        }
 
         if *received >= self.view.quorum() {
             let created_qc =
@@ -802,7 +806,9 @@ where
             .as_mut_leader()
             .expect("Leader decision log not available");
 
-        leader_log.accept_vote(message.header().from(), vote_msg)?;
+        if !leader_log.accept_vote(message.header().from(), vote_msg)? {
+            return Ok(DecisionResult::DuplicateVote(message.header().from()));
+        }
 
         if *received >= self.view.quorum() {
             let created_qc =

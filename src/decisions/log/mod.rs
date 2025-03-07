@@ -171,16 +171,22 @@ impl VoteStore {
         }
     }
 
+    /// Accept a vote received through the protocol
+    /// # [Returns]
+    /// True if the vote was accepted, false if the vote was already present
     pub(super) fn accept_vote(
         &mut self,
         voter: NodeId,
         voted_node: DecisionNodeHeader,
         vote_signature: PartialSignature,
-    ) {
-        self.decision_nodes
+    ) -> bool {
+        let previous = self
+            .decision_nodes
             .entry(voted_node)
             .or_default()
             .insert(voter, vote_signature);
+
+        previous.is_none()
     }
 
     pub(super) fn generate_qc<CR, CP>(
@@ -227,22 +233,17 @@ impl MsgLeaderDecisionLog {
         &mut self,
         sender: NodeId,
         vote: VoteMessage,
-    ) -> Result<(), VoteAcceptError> {
+    ) -> Result<bool, VoteAcceptError> {
         let (vote, signature) = vote.into_inner();
 
         match vote {
             VoteType::NewView(_) => Err(VoteAcceptError::NewViewVoteNotAcceptable),
-            VoteType::PrepareVote(vote) => {
-                self.prepare_qc.accept_vote(sender, vote, signature);
-                Ok(())
-            }
+            VoteType::PrepareVote(vote) => Ok(self.prepare_qc.accept_vote(sender, vote, signature)),
             VoteType::PreCommitVote(vote) => {
-                self.pre_commit_qc.accept_vote(sender, vote, signature);
-                Ok(())
+                Ok(self.pre_commit_qc.accept_vote(sender, vote, signature))
             }
             VoteType::CommitVote(commit_vote) => {
-                self.commit_qc.accept_vote(sender, commit_vote, signature);
-                Ok(())
+                Ok(self.commit_qc.accept_vote(sender, commit_vote, signature))
             }
         }
     }
