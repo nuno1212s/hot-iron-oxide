@@ -38,6 +38,14 @@ pub enum DecisionState {
     Commit(usize),
     Decide(usize),
     Finally,
+    NextView,
+}
+
+#[derive(Debug, Display)]
+pub enum DecisionFinalizationResult {
+    Finalized,
+    NextView,
+    NotFinal,
 }
 
 /// The decision for a given object
@@ -222,8 +230,12 @@ where
         self.view.primary()
     }
 
-    pub(super) fn can_be_finalized(&self) -> bool {
-        matches!(self.current_state, DecisionState::Finally)
+    pub(super) fn can_be_finalized(&self) -> DecisionFinalizationResult {
+        match self.current_state {
+            DecisionState::Finally => DecisionFinalizationResult::Finalized,
+            DecisionState::NextView => DecisionFinalizationResult::NextView,
+            _ => DecisionFinalizationResult::NotFinal,
+        }
     }
 
     /// Process a given consensus message
@@ -254,7 +266,9 @@ where
 
                 Ok(DecisionResult::MessageQueued)
             }
-            DecisionState::Init | DecisionState::Finally => Ok(DecisionResult::MessageIgnored),
+            DecisionState::Init | DecisionState::Finally | DecisionState::NextView => {
+                Ok(DecisionResult::MessageIgnored)
+            }
             DecisionState::Prepare(_) if is_leader => self
                 .process_message_prepare_leader::<NT, CR, CP, RQA>(
                     message, network, crypto, req_aggr,

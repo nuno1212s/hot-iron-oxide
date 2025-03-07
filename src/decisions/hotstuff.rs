@@ -1,5 +1,5 @@
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
-use crate::decisions::decision::{DecisionError, DecisionPollResult, DecisionResult, HSDecision};
+use crate::decisions::decision::{DecisionError, DecisionFinalizationResult, DecisionPollResult, DecisionResult, HSDecision};
 use crate::decisions::req_aggr::RequestAggr;
 use crate::decisions::{DecisionHandler, DecisionNodeHeader, QC};
 use crate::messages::serialize::HotIronOxSer;
@@ -131,9 +131,16 @@ where
     }
 
     pub fn can_finalize(&self) -> bool {
-        self.decisions
-            .front()
-            .is_some_and(HSDecision::can_be_finalized)
+        for item in &self.decisions {
+            match item.can_be_finalized() {
+                DecisionFinalizationResult::Finalized => return true,
+                DecisionFinalizationResult::NextView => continue,
+                DecisionFinalizationResult::NotFinal => return false,
+            }
+            
+        }
+        
+        false
     }
 
     #[instrument(skip_all)]
