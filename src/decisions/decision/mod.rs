@@ -97,7 +97,7 @@ where
         };
 
         let decision_log_type = if view.primary() == node_id {
-            DecisionLogType::Leader(LeaderDecisionLog::default())
+            DecisionLogType::Leader(LeaderDecisionLog::default(), ReplicaDecisionLog::default())
         } else {
             DecisionLogType::Replica(ReplicaDecisionLog::default())
         };
@@ -279,20 +279,51 @@ where
                 dec_handler,
                 crypto,
             )),
-            DecisionState::PreCommit(_) if is_leader => {
-                self.process_message_pre_commit_leader::<NT, CR, CP>(message, network, crypto)
-            }
-            DecisionState::PreCommit(_) => {
-                Ok(self.process_message_pre_commit::<NT, CR, CP>(message, network, crypto))
-            }
-            DecisionState::Commit(_) if is_leader => {
-                self.process_message_commit_leader::<NT, CR, CP>(message, network, crypto)
-            }
-            DecisionState::Commit(_) => {
-                Ok(self.process_message_commit::<NT, CR, CP>(message, network, crypto))
-            }
-            DecisionState::Decide(_) if is_leader => self
-                .process_message_decide_leader::<NT, CR, CP>(message, network, dec_handler, crypto),
+            DecisionState::PreCommit(_) if is_leader => match &message.message().message() {
+                HotFeOxMsgType::Proposal(_) => Ok(self.process_message_pre_commit::<NT, CR, CP>(
+                    message,
+                    network,
+                    dec_handler,
+                    crypto,
+                )),
+                HotFeOxMsgType::Vote(_) => {
+                    self.process_message_pre_commit_leader::<NT, CR, CP>(message, network, crypto)
+                }
+            },
+            DecisionState::PreCommit(_) => Ok(self.process_message_pre_commit::<NT, CR, CP>(
+                message,
+                network,
+                dec_handler,
+                crypto,
+            )),
+            DecisionState::Commit(_) if is_leader => match &message.message().message() {
+                HotFeOxMsgType::Proposal(_) => Ok(self.process_message_commit::<NT, CR, CP>(
+                    message,
+                    network,
+                    dec_handler,
+                    crypto,
+                )),
+                HotFeOxMsgType::Vote(_) => {
+                    self.process_message_commit_leader::<NT, CR, CP>(message, network, crypto)
+                }
+            },
+            DecisionState::Commit(_) => Ok(self.process_message_commit::<NT, CR, CP>(
+                message,
+                network,
+                dec_handler,
+                crypto,
+            )),
+            DecisionState::Decide(_) if is_leader => match &message.message().message() {
+                HotFeOxMsgType::Vote(_) => self.process_message_decide_leader::<NT, CR, CP>(
+                    message,
+                    network,
+                    dec_handler,
+                    crypto,
+                ),
+                HotFeOxMsgType::Proposal(_) => {
+                    Ok(self.process_message_decide::<NT, CR, CP>(message, dec_handler))
+                }
+            },
             DecisionState::Decide(_) => {
                 Ok(self.process_message_decide::<NT, CR, CP>(message, dec_handler))
             }
@@ -361,11 +392,11 @@ where
 
             self.decision_log.set_current_proposal(Some(node.clone()));
 
-            let decision_header = node.decision_header();
+            let decision_header = *node.decision_header();
 
             let new_qc = leader_log
                 .new_view_store()
-                .create_new_qc::<_, CP>(&**crypto, &node.decision_header())?;
+                .create_new_qc::<_, CP>(&**crypto, node.decision_header())?;
 
             let msg = HotFeOxMsgType::Proposal(ProposalMessage::new(ProposalType::Prepare(
                 node,
@@ -374,11 +405,7 @@ where
 
             let _ = network.broadcast(
                 HotFeOxMsg::new(self.view.sequence_number(), msg),
-                self.view
-                    .quorum_members()
-                    .clone()
-                    .into_iter()
-                    .filter(|node| *node != self.node_id),
+                self.view.quorum_members().iter().copied(),
             );
 
             self.consensus_metric.as_leader().register_prepare_sent();
@@ -398,7 +425,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler,
+        dec_handler: &mut DecisionHandler,
         crypto: &Arc<CR>,
     ) -> DecisionResult<RQ>
     where
@@ -428,9 +455,10 @@ where
         };
 
         if dec_handler.safe_node(&node, &qc) {
-            let short_node = node.decision_header();
+            let short_node = *node.decision_header();
 
             self.decision_log.set_current_proposal(Some(node.clone()));
+            dec_handler.install_latest_prepare_qc(qc.clone());
 
             threadpool::execute({
                 let network = network.clone();
@@ -560,6 +588,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
+        dec_handler: &mut DecisionHandler,
         crypto: &Arc<CR>,
     ) -> DecisionResult<RQ>
     where
@@ -590,6 +619,8 @@ where
         self.decision_log
             .as_mut_replica()
             .set_prepare_qc(qc.clone());
+
+        dec_handler.install_latest_prepare_qc(qc.clone());
 
         threadpool::execute({
             let network = network.clone();
@@ -716,6 +747,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
+        dec_handler: &mut DecisionHandler,
         crypto: &Arc<CR>,
     ) -> DecisionResult<RQ>
     where
@@ -730,20 +762,19 @@ where
             {
                 match prop.proposal_type() {
                     ProposalType::Commit(commit) => commit.clone(),
-                    ProposalType::Prepare(_, _) | ProposalType::PreCommit(_) => {
-                        return DecisionResult::MessageIgnored
-                    }
                     ProposalType::Decide(_) => {
                         self.decision_queue.queue_message(message);
 
                         return DecisionResult::MessageQueued;
-                    }
+                    },
+                    _ => return DecisionResult::MessageIgnored,
                 }
             }
             _ => return DecisionResult::MessageIgnored,
         };
 
         self.decision_log.as_mut_replica().set_locked_qc(qc.clone());
+        dec_handler.install_latest_locked_qc(qc.clone());
 
         threadpool::execute({
             let network = network.clone();
@@ -793,7 +824,7 @@ where
         let DecisionState::Decide(received) = &mut self.current_state else {
             unreachable!("Leader decision state is not Decide")
         };
-
+        
         let vote_msg = match message.message().message() {
             HotFeOxMsgType::Vote(vote_msg)
                 if message.message().sequence_number() == self.view.sequence_number() =>
@@ -801,9 +832,8 @@ where
                 if let VoteType::CommitVote(_) = vote_msg.vote_type() {
                     vote_msg.clone()
                 } else {
-                    self.decision_queue.queue_message(message);
-
-                    return Ok(DecisionResult::MessageQueued);
+                    // This is the last type of message we can receive
+                    return Ok(DecisionResult::MessageIgnored)
                 }
             }
             _ => {

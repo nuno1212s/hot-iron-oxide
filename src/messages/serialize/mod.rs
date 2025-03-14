@@ -20,10 +20,10 @@ where
     type ProtocolMessage = HotFeOxMsg<RQ>;
     type DecisionMetadata = DecisionNodeHeader;
     type DecisionAdditionalInfo = QC;
-
+    
     fn internally_verify_message<NI, OPVH>(
-        network_info: &Arc<NI>,
-        header: &Header,
+        _network_info: &Arc<NI>,
+        _header: &Header,
         message: &Self::ProtocolMessage,
     ) -> atlas_common::error::Result<()>
     where
@@ -32,13 +32,8 @@ where
         Self: Sized,
     {
         match message.message() {
-            HotFeOxMsgType::Proposal(proposal_message) => Ok(()),
-            HotFeOxMsgType::Vote(vote_message) => {
-                let buf =
-                    serialize_vote_message(message.sequence_number(), vote_message.vote_type());
-
-                Ok(())
-            }
+            HotFeOxMsgType::Proposal(_) => Ok(()), //TODO
+            HotFeOxMsgType::Vote(_) => Ok(()),
         }
     }
 }

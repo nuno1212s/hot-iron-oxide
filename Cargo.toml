@@ -28,3 +28,5 @@ serde = { version = "1.0.216", features = ["derive"] }
 rand = "0.8.5"
 bincode = {version = "2", features = ["default"]}
 derive_more = { version = "*" , features = ["display"]}
+
+strum = {version = "*", features = ["derive"]}

@@ -32,7 +32,7 @@ pub struct ReplicaDecisionLog {
 }
 
 pub enum DecisionLogType {
-    Leader(LeaderDecisionLog),
+    Leader(LeaderDecisionLog, ReplicaDecisionLog),
     Replica(ReplicaDecisionLog),
 }
 
@@ -137,27 +137,27 @@ impl<D> DecisionLog<D> {
     pub fn as_replica(&self) -> &ReplicaDecisionLog {
         match &self.decision_log_type {
             DecisionLogType::Replica(replica) => replica,
-            _ => unreachable!(),
+            DecisionLogType::Leader(_, replica) => replica,
         }
     }
 
     pub fn as_mut_replica(&mut self) -> &mut ReplicaDecisionLog {
         match &mut self.decision_log_type {
             DecisionLogType::Replica(replica) => replica,
-            _ => unreachable!(),
+            DecisionLogType::Leader(_, replica) => replica,
         }
     }
 
     pub fn as_leader(&self) -> &LeaderDecisionLog {
         match &self.decision_log_type {
-            DecisionLogType::Leader(leader) => leader,
+            DecisionLogType::Leader(leader, _) => leader,
             _ => unreachable!(),
         }
     }
 
     pub fn as_mut_leader(&mut self) -> &mut LeaderDecisionLog {
         match &mut self.decision_log_type {
-            DecisionLogType::Leader(leader) => leader,
+            DecisionLogType::Leader(leader, _) => leader,
             _ => unreachable!(),
         }
     }

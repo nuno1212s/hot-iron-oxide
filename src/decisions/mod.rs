@@ -8,30 +8,35 @@ use getset::{CopyGetters, Getters};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
+use strum::EnumCount;
 
 pub(crate) mod decision;
 pub(crate) mod hotstuff;
 mod log;
 mod msg_queue;
-mod proof;
+pub mod proof;
 pub(crate) mod req_aggr;
 
 /// The decision node header
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(PartialEq, Eq, Clone, Hash, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Hash, Copy, Debug, Getters, CopyGetters)]
 pub struct DecisionNodeHeader {
+    #[get = "pub"]
     view_no: SeqNo,
+    #[get = "pub"]
     previous_block: Option<Digest>,
+    #[get_copy = "pub"]
     current_block_digest: Digest,
+    #[get_copy = "pub"]
     contained_client_commands: usize,
 }
 
 /// The decision nod
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Getters, CopyGetters)]
+#[derive(Getters)]
 pub struct DecisionNode<D> {
-    #[getset(get_copy = "pub")]
+    #[getset(get = "pub")]
     decision_header: DecisionNodeHeader,
     #[getset(get = "pub")]
     client_commands: Vec<StoredMessage<D>>,
@@ -162,7 +167,7 @@ impl<D> DecisionNode<D> {
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, PartialEq, Eq, Hash, Copy)]
+#[derive(Clone, PartialEq, Eq, Hash, Copy, EnumCount)]
 pub enum QCType {
     PrepareVote,
     PreCommitVote,
