@@ -80,23 +80,23 @@ where
     }
 
     fn init_proof_from(
-        _metadata: DecisionMetadata<RQ, HotIronOxSer<RQ>>,
+        metadata: DecisionMetadata<RQ, HotIronOxSer<RQ>>,
         additional_data: Vec<DecisionAD<RQ, HotIronOxSer<RQ>>>,
         messages: Vec<StoredMessage<ProtocolMessage<RQ, HotIronOxSer<RQ>>>>,
     ) -> atlas_common::error::Result<PProof<RQ, HotIronOxSer<RQ>, HotIronOxSer<RQ>>> {
 
-        Ok(Proof::new_from_storage(additional_data, messages)?)
+        Ok(Proof::new_from_storage(metadata, additional_data, messages)?)
     }
 
     fn init_proof_from_scm(
-        _metadata: DecisionMetadata<RQ, HotIronOxSer<RQ>>,
+        metadata: DecisionMetadata<RQ, HotIronOxSer<RQ>>,
         additional_data: Vec<DecisionAD<RQ, HotIronOxSer<RQ>>>,
         messages: Vec<ShareableConsensusMessage<RQ, HotIronOxSer<RQ>>>,
     ) -> atlas_common::error::Result<PProof<RQ, HotIronOxSer<RQ>, HotIronOxSer<RQ>>> {
         let cloned_messages = messages.iter()
             .map(|msg| (**msg).clone()).collect::<Vec<_>>();
         
-        Ok(Proof::new_from_storage(additional_data, cloned_messages)?)
+        Ok(Proof::new_from_storage(metadata, additional_data, cloned_messages)?)
     }
 
     fn decompose_proof(

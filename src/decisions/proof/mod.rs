@@ -1,4 +1,4 @@
-use crate::decisions::{DecisionNode, QCType, QC};
+use crate::decisions::{DecisionNode, DecisionNodeHeader, QCType, QC};
 use crate::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType};
 use atlas_common::collections::HashMap;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -8,6 +8,7 @@ use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::info;
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Getters)]
@@ -29,6 +30,7 @@ where
     /// Returns an error if the prepare proposal is not found within
     /// the stored messages.
     pub fn new_from_storage(
+        decision_header: DecisionNodeHeader,
         qcs: Vec<QC>,
         messages: Vec<StoredMessage<HotFeOxMsg<D>>>,
     ) -> Result<Self, ProofFromStorageError> {
@@ -64,6 +66,10 @@ where
             .next()
             .ok_or(ProofFromStorageError::FailedToObtainPrepareProposal)?;
 
+        if *decision_node.decision_header() != decision_header {
+            return Err(ProofFromStorageError::MissMatchingDecisionHeader);
+        }
+        
         Ok(Self {
             decision_node,
             qcs,
@@ -113,4 +119,6 @@ where
 pub enum ProofFromStorageError {
     #[error("Failed to obtain prepare proposal")]
     FailedToObtainPrepareProposal,
+    #[error("Failed to match the decision header of the proof with the prepare proposal")]
+    MissMatchingDecisionHeader,
 }

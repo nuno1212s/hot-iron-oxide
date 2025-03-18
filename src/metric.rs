@@ -65,7 +65,7 @@ pub fn metrics() -> Vec<MetricRegistry> {
 }
 
 pub(crate) enum ConsensusDecisionMetric {
-    Leader(LeaderConsensusDecisionMetric),
+    Leader(LeaderConsensusDecisionMetric, ReplicaConsensusDecisionMetric),
     Replica(ReplicaConsensusDecisionMetric),
 }
 
@@ -103,7 +103,7 @@ pub(crate) struct ReplicaConsensusDecisionMetric {
 impl ConsensusDecisionMetric {
     #[must_use]
     pub(crate) fn leader() -> Self {
-        Self::Leader(LeaderConsensusDecisionMetric::default())
+        Self::Leader(LeaderConsensusDecisionMetric::default(), ReplicaConsensusDecisionMetric::default())
     }
 
     #[must_use]
@@ -113,15 +113,14 @@ impl ConsensusDecisionMetric {
 
     pub(crate) fn as_leader(&mut self) -> &mut LeaderConsensusDecisionMetric {
         match self {
-            Self::Leader(metric) => metric,
+            Self::Leader(metric, _) => metric,
             _ => panic!("Expected Leader metric"),
         }
     }
 
     pub(crate) fn as_replica(&mut self) -> &mut ReplicaConsensusDecisionMetric {
         match self {
-            Self::Replica(metric) => metric,
-            _ => panic!("Expected Replica metric"),
+            Self::Replica(metric) | Self::Leader(_, metric) => metric,
         }
     }
 }

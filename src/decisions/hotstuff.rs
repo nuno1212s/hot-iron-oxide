@@ -23,7 +23,7 @@ use std::collections::{BTreeSet, BinaryHeap, VecDeque};
 use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 /// A data structure to keep track of any consensus instances that have been signalled
 ///
@@ -126,18 +126,33 @@ where
         &self.current_view
     }
 
-    fn index(&self, seq_no: &SeqNo) -> Either<InvalidSeqNo, usize> {
+    fn index(&self, seq_no: SeqNo) -> Either<InvalidSeqNo, usize> {
         seq_no.index(self.current_view.sequence_number())
     }
+    
+    pub fn handle_next_view_for_decision(&mut self, seq_no: SeqNo) {
+        let index = match self.index(seq_no) {
+            Either::Right(i) => i,
+            Either::Left(_) => return,
+        };
 
+        if index < self.decisions.len() {
+            self.decisions.get_mut(index).unwrap().next_view_received();
+            
+            
+            
+        } else {
+            warn!("Ignoring next view message for seq no {:?} as we are already in seq no {:?}", seq_no, self.sequence_number());
+        }
+    }
+    
     pub fn can_finalize(&self) -> bool {
         for item in &self.decisions {
             match item.can_be_finalized() {
                 DecisionFinalizationResult::Finalized => return true,
-                DecisionFinalizationResult::NextView => continue,
+                DecisionFinalizationResult::NextView => (),
                 DecisionFinalizationResult::NotFinal => return false,
             }
-            
         }
         
         false

@@ -132,7 +132,7 @@ where
         CP: CryptoProvider,
     {
         match self.current_state {
-            DecisionState::Init if !self.is_leader() => {
+            DecisionState::Init  => {
                 threadpool::execute({
                     let network = network.clone();
                     let crypto_info = crypto_info.clone();
@@ -166,11 +166,6 @@ where
                 });
 
                 self.consensus_metric.as_replica().register_new_view_sent();
-                self.current_state = DecisionState::Prepare(0);
-
-                DecisionPollResult::Recv
-            }
-            DecisionState::Init => {
                 self.current_state = DecisionState::Prepare(0);
 
                 DecisionPollResult::Recv
@@ -238,6 +233,10 @@ where
         }
     }
 
+    pub fn next_view_received(&mut self) {
+        self.current_state = DecisionState::NextView;
+    }
+
     /// Process a given consensus message
     pub fn process_message<NT, CR, CP, RQA>(
         &mut self,
@@ -269,10 +268,24 @@ where
             DecisionState::Init | DecisionState::Finally | DecisionState::NextView => {
                 Ok(DecisionResult::MessageIgnored)
             }
-            DecisionState::Prepare(_) if is_leader => self
-                .process_message_prepare_leader::<NT, CR, CP, RQA>(
-                    message, network, crypto, req_aggr,
-                ),
+            DecisionState::Prepare(_) if is_leader => {
+                match message.message().message() {
+                    HotFeOxMsgType::Proposal(_) => {
+                        Ok(self.process_message_prepare::<NT, CR, CP>(
+                            message,
+                            network,
+                            dec_handler,
+                            crypto,
+                        ))
+                    }
+                    HotFeOxMsgType::Vote(_) => {
+                        self.process_message_prepare_leader::<NT, CR, CP, RQA>(
+                                message, network, crypto, req_aggr,
+                            )
+                    }
+                }
+                
+            },
             DecisionState::Prepare(_) => Ok(self.process_message_prepare::<NT, CR, CP>(
                 message,
                 network,
@@ -329,7 +342,7 @@ where
             }
         }
     }
-
+    
     fn process_message_prepare_leader<NT, CR, CP, RQA>(
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
@@ -409,7 +422,6 @@ where
             );
 
             self.consensus_metric.as_leader().register_prepare_sent();
-            self.current_state = DecisionState::PreCommit(0);
 
             Ok(DecisionResult::DecisionProgressed(
                 Some(new_qc),
@@ -572,7 +584,6 @@ where
             let _ = network.broadcast(msg, view_members.into_iter());
 
             self.consensus_metric.as_leader().register_pre_commit_sent();
-            self.current_state = DecisionState::Commit(0);
 
             Ok(DecisionResult::DecisionProgressed(
                 Some(created_qc),
@@ -731,7 +742,6 @@ where
             });
 
             self.consensus_metric.as_leader().register_commit_sent();
-            self.current_state = DecisionState::Decide(0);
 
             Ok(DecisionResult::DecisionProgressed(
                 Some(created_qc),
@@ -881,7 +891,6 @@ where
             });
 
             self.consensus_metric.as_leader().register_decided_sent();
-            self.current_state = DecisionState::Finally;
 
             dec_handler.install_latest_qc(created_qc.clone());
 
