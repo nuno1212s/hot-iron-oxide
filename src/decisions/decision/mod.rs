@@ -30,16 +30,17 @@ use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, error, info};
 
-#[derive(Debug, Display)]
+#[derive(Debug)]
 pub enum DecisionState {
     Init,
-    Prepare(usize),
-    PreCommit(usize),
-    Commit(usize),
-    Decide(usize),
+    Prepare(bool, usize),
+    PreCommit(bool, usize),
+    Commit(bool, usize),
+    Decide(bool, usize),
     Finally,
     NextView,
 }
+
 
 #[derive(Debug, Display)]
 pub enum DecisionFinalizationResult {
@@ -166,11 +167,11 @@ where
                 });
 
                 self.consensus_metric.as_replica().register_new_view_sent();
-                self.current_state = DecisionState::Prepare(0);
+                self.current_state = DecisionState::Prepare(false, 0);
 
                 DecisionPollResult::Recv
             }
-            DecisionState::Prepare(_) if self.decision_queue.should_poll() => {
+            DecisionState::Prepare(_, _) if self.decision_queue.should_poll() => {
                 let decision_queue = self.decision_queue.prepare.pop_front();
 
                 if let Some(message) = decision_queue {
@@ -179,7 +180,7 @@ where
                     DecisionPollResult::Recv
                 }
             }
-            DecisionState::PreCommit(_) if self.decision_queue.should_poll() => {
+            DecisionState::PreCommit(_, _) if self.decision_queue.should_poll() => {
                 let decision_queue = self.decision_queue.pre_commit.pop_front();
 
                 if let Some(message) = decision_queue {
@@ -188,7 +189,7 @@ where
                     DecisionPollResult::Recv
                 }
             }
-            DecisionState::Commit(_) if self.decision_queue.should_poll() => {
+            DecisionState::Commit(_, _) if self.decision_queue.should_poll() => {
                 let decision_queue = self.decision_queue.commit.pop_front();
 
                 if let Some(message) = decision_queue {
@@ -197,7 +198,7 @@ where
                     DecisionPollResult::Recv
                 }
             }
-            DecisionState::Decide(_) if self.decision_queue.should_poll() => {
+            DecisionState::Decide(_, _) if self.decision_queue.should_poll() => {
                 let decision_queue = self.decision_queue.decide.pop_front();
 
                 if let Some(message) = decision_queue {
@@ -268,7 +269,7 @@ where
             DecisionState::Init | DecisionState::Finally | DecisionState::NextView => {
                 Ok(DecisionResult::MessageIgnored)
             }
-            DecisionState::Prepare(_) if is_leader => {
+            DecisionState::Prepare(_, _) if is_leader => {
                 match message.message().message() {
                     HotFeOxMsgType::Proposal(_) => {
                         Ok(self.process_message_prepare::<NT, CR, CP>(
@@ -286,13 +287,13 @@ where
                 }
                 
             },
-            DecisionState::Prepare(_) => Ok(self.process_message_prepare::<NT, CR, CP>(
+            DecisionState::Prepare(_, _) => Ok(self.process_message_prepare::<NT, CR, CP>(
                 message,
                 network,
                 dec_handler,
                 crypto,
             )),
-            DecisionState::PreCommit(_) if is_leader => match &message.message().message() {
+            DecisionState::PreCommit(_, _) if is_leader => match &message.message().message() {
                 HotFeOxMsgType::Proposal(_) => Ok(self.process_message_pre_commit::<NT, CR, CP>(
                     message,
                     network,
@@ -303,13 +304,13 @@ where
                     self.process_message_pre_commit_leader::<NT, CR, CP>(message, network, crypto)
                 }
             },
-            DecisionState::PreCommit(_) => Ok(self.process_message_pre_commit::<NT, CR, CP>(
+            DecisionState::PreCommit(_, _) => Ok(self.process_message_pre_commit::<NT, CR, CP>(
                 message,
                 network,
                 dec_handler,
                 crypto,
             )),
-            DecisionState::Commit(_) if is_leader => match &message.message().message() {
+            DecisionState::Commit(_, _) if is_leader => match &message.message().message() {
                 HotFeOxMsgType::Proposal(_) => Ok(self.process_message_commit::<NT, CR, CP>(
                     message,
                     network,
@@ -320,13 +321,13 @@ where
                     self.process_message_commit_leader::<NT, CR, CP>(message, network, crypto)
                 }
             },
-            DecisionState::Commit(_) => Ok(self.process_message_commit::<NT, CR, CP>(
+            DecisionState::Commit(_, _) => Ok(self.process_message_commit::<NT, CR, CP>(
                 message,
                 network,
                 dec_handler,
                 crypto,
             )),
-            DecisionState::Decide(_) if is_leader => match &message.message().message() {
+            DecisionState::Decide(_, _) if is_leader => match &message.message().message() {
                 HotFeOxMsgType::Vote(_) => self.process_message_decide_leader::<NT, CR, CP>(
                     message,
                     network,
@@ -337,7 +338,7 @@ where
                     Ok(self.process_message_decide::<NT, CR, CP>(message, dec_handler))
                 }
             },
-            DecisionState::Decide(_) => {
+            DecisionState::Decide(_, _) => {
                 Ok(self.process_message_decide::<NT, CR, CP>(message, dec_handler))
             }
         }
@@ -356,7 +357,7 @@ where
         RQA: ReqAggregator<RQ>,
         CP: CryptoProvider,
     {
-        let DecisionState::Prepare(received) = &mut self.current_state else {
+        let DecisionState::Prepare(sent_prepare, received) = &mut self.current_state else {
             unreachable!("Leader decision state is not Prepare")
         };
 
@@ -392,7 +393,9 @@ where
             .new_view_store()
             .accept_new_view(message.header().from(), vote_message)?;
 
-        if *received >= self.view.quorum() {
+        if *received >= self.view.quorum() && !*sent_prepare {
+            *sent_prepare = true;
+            
             let high_qc = leader_log.new_view_store().get_high_qc();
 
             let (pooled_request, digest) = req_aggr.take_pool_requests();
@@ -466,47 +469,7 @@ where
             }
         };
 
-        if dec_handler.safe_node(&node, &qc) {
-            let short_node = *node.decision_header();
-
-            self.decision_log.set_current_proposal(Some(node.clone()));
-            dec_handler.install_latest_prepare_qc(qc.clone());
-
-            threadpool::execute({
-                let network = network.clone();
-
-                let crypto = crypto.clone();
-
-                let view = self.view.clone();
-
-                move || {
-                    // Send the message signing processing to the threadpool
-                    let prepare_vote = VoteType::PrepareVote(short_node);
-
-                    let msg_signature = get_partial_signature_for_message::<CR, CP>(
-                        &*crypto,
-                        view.sequence_number(),
-                        &prepare_vote,
-                    );
-
-                    let vote_msg =
-                        HotFeOxMsgType::Vote(VoteMessage::new(prepare_vote, msg_signature));
-
-                    let _ = network.send(
-                        HotFeOxMsg::new(view.sequence_number(), vote_msg),
-                        view.primary(),
-                        true,
-                    );
-                }
-            });
-
-            self.consensus_metric
-                .as_replica()
-                .register_prepare_received();
-            self.current_state = DecisionState::PreCommit(0);
-
-            DecisionResult::DecisionProgressed(None, Some(short_node), message)
-        } else {
+        if !dec_handler.safe_node(&node, &qc) {
             debug!(
                 "Node {:?}, QC {:?} does not extend from {:?}",
                 node,
@@ -514,8 +477,48 @@ where
                 dec_handler.latest_qc()
             );
 
-            DecisionResult::MessageIgnored
+           return DecisionResult::MessageIgnored
         }
+        
+        let short_node = *node.decision_header();
+
+        self.decision_log.set_current_proposal(Some(node.clone()));
+        dec_handler.install_latest_prepare_qc(qc.clone());
+
+        threadpool::execute({
+            let network = network.clone();
+
+            let crypto = crypto.clone();
+
+            let view = self.view.clone();
+
+            move || {
+                // Send the message signing processing to the threadpool
+                let prepare_vote = VoteType::PrepareVote(short_node);
+
+                let msg_signature = get_partial_signature_for_message::<CR, CP>(
+                    &*crypto,
+                    view.sequence_number(),
+                    &prepare_vote,
+                );
+
+                let vote_msg =
+                    HotFeOxMsgType::Vote(VoteMessage::new(prepare_vote, msg_signature));
+
+                let _ = network.send(
+                    HotFeOxMsg::new(view.sequence_number(), vote_msg),
+                    view.primary(),
+                    true,
+                );
+            }
+        });
+
+        self.consensus_metric
+            .as_replica()
+            .register_prepare_received();
+        self.current_state = DecisionState::PreCommit(false, 0);
+
+        DecisionResult::DecisionProgressed(None, Some(short_node), message)
     }
 
     fn process_message_pre_commit_leader<NT, CR, CP>(
@@ -529,7 +532,7 @@ where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
     {
-        let DecisionState::PreCommit(received) = &mut self.current_state else {
+        let DecisionState::PreCommit(sent_pre_commit, received) = &mut self.current_state else {
             unreachable!("Leader decision state is not PreCommit")
         };
 
@@ -563,7 +566,9 @@ where
             return Ok(DecisionResult::DuplicateVote(message.header().from()));
         }
 
-        if *received >= self.view.quorum() {
+        if *received >= self.view.quorum() && !*sent_pre_commit {
+            *sent_pre_commit = true;
+            
             let created_qc =
                 leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::PrepareVote)?;
 
@@ -661,7 +666,7 @@ where
         self.consensus_metric
             .as_replica()
             .register_pre_commit_proposal();
-        self.current_state = DecisionState::Commit(0);
+        self.current_state = DecisionState::Commit(false, 0);
 
         DecisionResult::DecisionProgressed(Some(qc), None, message)
     }
@@ -677,7 +682,7 @@ where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
     {
-        let DecisionState::Commit(received) = &mut self.current_state else {
+        let DecisionState::Commit(sent_commit, received) = &mut self.current_state else {
             unreachable!("Leader decision state is not Commit")
         };
 
@@ -715,7 +720,9 @@ where
             return Ok(DecisionResult::DuplicateVote(message.header().from()));
         }
 
-        if *received >= self.view.quorum() {
+        if *received >= self.view.quorum() && !*sent_commit {
+            *sent_commit = true;
+            
             let created_qc =
                 leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::PreCommitVote)?;
 
@@ -814,7 +821,7 @@ where
         self.consensus_metric
             .as_replica()
             .register_commit_proposal();
-        self.current_state = DecisionState::Decide(0);
+        self.current_state = DecisionState::Decide(false, 0);
 
         DecisionResult::DecisionProgressed(Some(qc), None, message)
     }
@@ -831,7 +838,7 @@ where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
     {
-        let DecisionState::Decide(received) = &mut self.current_state else {
+        let DecisionState::Decide(sent_decide, received) = &mut self.current_state else {
             unreachable!("Leader decision state is not Decide")
         };
         
@@ -864,7 +871,9 @@ where
             return Ok(DecisionResult::DuplicateVote(message.header().from()));
         }
 
-        if *received >= self.view.quorum() {
+        if *received >= self.view.quorum() && !*sent_decide {
+            *sent_decide = true;
+            
             let created_qc =
                 leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::CommitVote)?;
 
