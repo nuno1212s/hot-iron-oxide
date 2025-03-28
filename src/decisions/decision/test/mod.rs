@@ -3,17 +3,15 @@ mod decision_test {
     use crate::crypto::{
         get_partial_signature_for_message, AtlasTHCryptoProvider, CryptoInformationProvider,
     };
-    use crate::decisions::decision::{
-        DecisionPollResult, DecisionResult, DecisionState, HSDecision,
-    };
+    use crate::decisions::decision::{DecisionResult, DecisionState, HSDecision};
     use crate::decisions::log::MsgLeaderDecisionLog;
     use crate::decisions::req_aggr::ReqAggregator;
-    use crate::decisions::{DecisionHandler, DecisionNode, QCType, QC};
+    use crate::decisions::{DecisionHandler, DecisionNode, QC};
     use crate::messages::serialize::HotIronOxSer;
     use crate::messages::{
-        HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, VoteMessage, VoteType,
+        HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
+        VoteType,
     };
-    use crate::view::leader_allocation::RoundRobinLA;
     use crate::view::View;
     use anyhow::anyhow;
     use atlas_common::collections::HashMap;
@@ -30,17 +28,17 @@ mod decision_test {
     use atlas_common::{InitConfig, InitGuard};
     use atlas_communication::lookup_table::MessageModule;
     use atlas_communication::message::{
-        Buf, Header, SerializedMessage, StoredMessage, StoredSerializedMessage, WireMessage,
+        Buf, SerializedMessage, StoredMessage, StoredSerializedMessage, WireMessage,
     };
     use atlas_communication::reconfiguration;
     use atlas_communication::reconfiguration::NetworkInformationProvider;
     use atlas_core::messages::{ForwardedRequestsMessage, StoredRequestMessage};
     use atlas_core::ordering_protocol::networking::serialize::NetworkView;
     use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
-    use rand::random;
     use serde::{Deserialize, Serialize};
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
+    use std::cell::RefCell;
+    use std::collections::{BTreeMap, VecDeque};
+    use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Serialize, Deserialize)]
     struct BlankProtocol;
@@ -84,7 +82,7 @@ mod decision_test {
             ((node_count - 1) / 3) * 2
         }
 
-        fn new(node_count: usize) -> Result<Self> {
+        fn new(node_count: usize) -> Self {
             let nodes = (0..node_count).map(NodeId::from).collect::<Vec<_>>();
 
             let private_key =
@@ -92,11 +90,11 @@ mod decision_test {
 
             let public_key = private_key.public_key_set();
 
-            Ok(CryptoInfoMockFactory {
+            CryptoInfoMockFactory {
                 nodes,
                 pkey_set: private_key,
                 pub_key_set: public_key,
-            })
+            }
         }
 
         fn create_mock_for(&self, node_id: NodeId) -> CryptoInfoMock {
@@ -219,21 +217,23 @@ mod decision_test {
         }
     }
 
-    struct NetworkNode {
+    struct NetworkNode<RQ> {
         node: NodeId,
         network_info: Arc<MockNetworkInfo>,
+        pending_own_messages: Mutex<VecDeque<StoredMessage<HotFeOxMsg<RQ>>>>,
     }
 
-    impl NetworkNode {
+    impl<RQ> NetworkNode<RQ> {
         fn new(node_id: Option<NodeId>, network_info: Arc<MockNetworkInfo>) -> Self {
             NetworkNode {
                 node: node_id.unwrap_or(NodeId(0)),
                 network_info,
+                pending_own_messages: Mutex::new(VecDeque::new()),
             }
         }
     }
 
-    impl<RQ> OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> for NetworkNode
+    impl<RQ> OrderProtocolSendNode<RQ, HotIronOxSer<RQ>> for NetworkNode<RQ>
     where
         RQ: SerMsg,
     {
@@ -258,29 +258,56 @@ mod decision_test {
             Ok(())
         }
 
-        fn send(&self, message: HotFeOxMsg<RQ>, target: NodeId, flush: bool) -> Result<()> {
+        fn send(&self, message: HotFeOxMsg<RQ>, target: NodeId, _flush: bool) -> Result<()> {
+            if target == self.node {
+                let stored_message = WireMessage::new(
+                    self.node,
+                    target,
+                    MessageModule::Protocol,
+                    Buf::new(),
+                    0,
+                    None,
+                    None,
+                );
+
+                let header = stored_message.into_inner().0;
+
+                let mut guard = self
+                    .pending_own_messages
+                    .lock()
+                    .expect("Failed to lock resource");
+
+                guard.push_back(StoredMessage::new(header, message));
+            }
+
             Ok(())
         }
 
         fn send_signed(&self, message: HotFeOxMsg<RQ>, target: NodeId, flush: bool) -> Result<()> {
-            Ok(())
+            self.send(message, target, flush)
         }
 
         fn broadcast<I>(
             &self,
             message: HotFeOxMsg<RQ>,
-            targets: I,
+            mut targets: I,
         ) -> std::result::Result<(), Vec<NodeId>>
         where
             I: Iterator<Item = NodeId>,
         {
-            Ok(())
+            let option = targets.find(|node| *node == self.node);
+
+            if let Some(target) = option {
+                self.send(message, target, false).map_err(|_| Vec::new())
+            } else {
+                Ok(())
+            }
         }
 
         fn broadcast_signed<I>(
             &self,
-            message: HotFeOxMsg<RQ>,
-            targets: I,
+            _message: HotFeOxMsg<RQ>,
+            _targets: I,
         ) -> std::result::Result<(), Vec<NodeId>>
         where
             I: Iterator<Item = NodeId>,
@@ -290,14 +317,14 @@ mod decision_test {
 
         fn serialize_digest_message(
             &self,
-            message: HotFeOxMsg<RQ>,
+            _message: HotFeOxMsg<RQ>,
         ) -> Result<(SerializedMessage<HotFeOxMsg<RQ>>, Digest)> {
             unimplemented!()
         }
 
         fn broadcast_serialized(
             &self,
-            messages: BTreeMap<NodeId, StoredSerializedMessage<HotFeOxMsg<RQ>>>,
+            _messages: BTreeMap<NodeId, StoredSerializedMessage<HotFeOxMsg<RQ>>>,
         ) -> std::result::Result<(), Vec<NodeId>> {
             Ok(())
         }
@@ -329,7 +356,7 @@ mod decision_test {
     fn setup_network_node<RQ>(
         node: NodeId,
         mock_info_factory: &MockNetworkInfoFactory,
-    ) -> Arc<NetworkNode>
+    ) -> Arc<NetworkNode<RQ>>
     where
         RQ: SerMsg,
     {
@@ -344,7 +371,7 @@ mod decision_test {
         nodes: Vec<NodeId>,
         rq_aggr: Arc<RQAggr>,
         mock_network_info_factory: MockNetworkInfoFactory,
-        node: Arc<NetworkNode>,
+        node: Arc<NetworkNode<BlankProtocol>>,
         decision: HSDecision<BlankProtocol>,
         crypto_info_mock_factory: CryptoInfoMockFactory,
         init_guard: InitGuard,
@@ -370,7 +397,7 @@ mod decision_test {
 
         let decision = setup_decision::<BlankProtocol>(None, Some(node_id));
 
-        let threshold_crypto = CryptoInfoMockFactory::new(NODE_COUNT).unwrap();
+        let threshold_crypto = CryptoInfoMockFactory::new(NODE_COUNT);
 
         Scenario {
             nodes,
@@ -398,7 +425,6 @@ mod decision_test {
     }
 
     fn build_proposal_hotstuff_message<RQ>(
-        crypto: &CryptoInfoMock,
         seq_no: SeqNo,
         proposal: ProposalType<RQ>,
     ) -> HotFeOxMsg<RQ> {
@@ -452,6 +478,41 @@ mod decision_test {
             .collect::<Vec<_>>()
     }
 
+    fn process_pending_node_messages(
+        scenario: &mut Scenario,
+        cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
+        decision_handler: &mut DecisionHandler,
+    ) -> Vec<DecisionResult<BlankProtocol>> {
+        let mut results = Vec::new();
+        
+        let mut stored_messages = scenario
+            .node
+            .pending_own_messages
+            .lock()
+            .expect("Failed to lock resource");
+
+        while let Some(message) = stored_messages.pop_front() {
+            let message = Arc::new(message);
+            
+            let target = message.header().to();
+
+            let decision_result = scenario
+                .decision
+                .process_message::<_, _, AtlasTHCryptoProvider, _>(
+                    message,
+                    &scenario.node,
+                    decision_handler,
+                    cryptos_for.get(&target).unwrap(),
+                    &scenario.rq_aggr,
+                )
+                .unwrap();
+
+            results.push(decision_result);
+        }
+
+        results
+    }
+
     #[test]
     fn assert_queued_when_init() {
         let mut scenario = setup_scenario(NodeId(0));
@@ -461,16 +522,15 @@ mod decision_test {
             .iter()
             .map(|node| {
                 (
-                    node.clone(),
+                    *node,
                     Arc::new(scenario.crypto_info_mock_factory.create_mock_for(*node)),
                 )
             })
             .collect::<HashMap<_, _>>();
 
         let leader = scenario.decision.view().primary();
-        let quorum = scenario.decision.view().quorum();
 
-        let decision_handler = DecisionHandler::default();
+        let mut decision_handler = DecisionHandler::default();
 
         let sequence_num = scenario.decision.view().sequence_number();
 
@@ -495,18 +555,18 @@ mod decision_test {
             leader,
             &targets[..],
             &cryptos_for,
-            &decision_handler,
+            &mut decision_handler,
         );
 
         assert!(results
             .iter()
-            .all(|decision| { matches!(decision, DecisionResult::MessageQueued) }))
+            .all(|decision| { matches!(decision, DecisionResult::MessageQueued) }));
     }
 
     fn new_view_decision_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &DecisionHandler<BlankProtocol>,
+        decision_handler: &mut DecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
@@ -533,7 +593,7 @@ mod decision_test {
             leader,
             &targets[..],
             cryptos_for,
-            &decision_handler,
+            decision_handler,
         )
     }
 
@@ -555,13 +615,14 @@ mod decision_test {
         let leader = scenario.decision.view().primary();
         let quorum = scenario.decision.view().quorum();
 
-        let decision_handler = DecisionHandler::default();
+        let mut decision_handler = DecisionHandler::default();
 
         scenario
             .decision
-            .set_current_state(DecisionState::Prepare(0));
+            .set_current_state(DecisionState::Prepare(false, 0));
 
-        let results = new_view_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
+        let results =
+            new_view_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         assert_eq!(
             quorum,
@@ -575,25 +636,43 @@ mod decision_test {
 
         assert!(matches!(
             scenario.decision.current_state,
-            DecisionState::PreCommit(_)
+            DecisionState::Prepare(true, 3)
+        ));
+        
+        // Process the proposal message
+        let results = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
+        assert_eq!(
+            1,
+            results
+                .iter()
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::DecisionProgressed(_, _, _))
+                })
+                .count()
+        );
+        
+        assert!(matches!(
+            scenario.decision.current_state,
+            DecisionState::PreCommit(false, 0)
         ));
     }
 
     fn prepare_decision_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &DecisionHandler<BlankProtocol>,
+        decision_handler: &mut DecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
         let seq_no = scenario.decision.sequence_number();
 
-        let decision = scenario
+        let decision = *scenario
             .decision
             .decision_log()
             .current_proposal()
             .as_ref()
-            .map(|proposal| proposal.decision_header())
+            .map(DecisionNode::decision_header)
             .unwrap();
 
         let create_msg_fn = |node_id| {
@@ -636,23 +715,22 @@ mod decision_test {
             })
             .collect::<HashMap<_, _>>();
 
-        let leader = scenario.decision.view().primary();
         let quorum = scenario.decision.view().quorum();
 
-        let decision_handler = DecisionHandler::default();
+        let mut decision_handler = DecisionHandler::default();
 
         scenario
             .decision
-            .set_current_state(DecisionState::Prepare(0));
+            .set_current_state(DecisionState::Prepare(false, 0));
 
-        let seq_no = scenario.decision.sequence_number();
+        let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
-        let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
-
-        let results = prepare_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
+        let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
+        let results = prepare_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         assert_eq!(
-            quorum - 1,
+            quorum,
             results
                 .iter()
                 .filter(|decision| {
@@ -660,7 +738,14 @@ mod decision_test {
                 })
                 .count()
         );
-
+        
+        assert!(matches!(
+            scenario.decision.current_state,
+            DecisionState::PreCommit(true, 3)
+        ));
+        
+        let results = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
         assert_eq!(
             1,
             results
@@ -673,25 +758,25 @@ mod decision_test {
 
         assert!(matches!(
             scenario.decision.current_state,
-            DecisionState::Commit(_)
+            DecisionState::Commit(false, 0)
         ));
     }
 
     fn commit_decision_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &DecisionHandler<BlankProtocol>,
+        decision_handler: &mut DecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
         let seq_no = scenario.decision.sequence_number();
 
-        let decision = scenario
+        let decision = *scenario
             .decision
             .decision_log()
             .current_proposal()
             .as_ref()
-            .map(|proposal| proposal.decision_header())
+            .map(DecisionNode::decision_header)
             .unwrap();
 
         let create_msg_fn = |node_id| {
@@ -734,25 +819,26 @@ mod decision_test {
             })
             .collect::<HashMap<_, _>>();
 
-        let leader = scenario.decision.view().primary();
         let quorum = scenario.decision.view().quorum();
 
-        let decision_handler = DecisionHandler::default();
+        let mut decision_handler = DecisionHandler::default();
 
         scenario
             .decision
-            .set_current_state(DecisionState::Prepare(0));
+            .set_current_state(DecisionState::Prepare(false, 0));
 
-        let seq_no = scenario.decision.sequence_number();
+        let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
+        let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
+        let _ = prepare_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
+        let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
-        let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
-
-        let _ = prepare_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
-
-        let results = commit_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
+        let results = commit_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         assert_eq!(
-            quorum - 1,
+            quorum,
             results
                 .iter()
                 .filter(|decision| {
@@ -761,6 +847,13 @@ mod decision_test {
                 .count()
         );
 
+        assert!(matches!(
+            scenario.decision.current_state,
+            DecisionState::Commit(true, 3)
+        ));
+        
+        let results = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
         assert_eq!(
             1,
             results
@@ -770,28 +863,28 @@ mod decision_test {
                 })
                 .count()
         );
-
+        
         assert!(matches!(
             scenario.decision.current_state,
-            DecisionState::Decide(_)
+            DecisionState::Decide(..)
         ));
     }
 
     fn decide_decision_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &DecisionHandler<BlankProtocol>,
+        decision_handler: &mut DecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
         let seq_no = scenario.decision.sequence_number();
 
-        let decision = scenario
+        let decision = *scenario
             .decision
             .decision_log()
             .current_proposal()
             .as_ref()
-            .map(|proposal| proposal.decision_header())
+            .map(DecisionNode::decision_header)
             .unwrap();
 
         let create_msg_fn = |node_id| {
@@ -834,27 +927,30 @@ mod decision_test {
             })
             .collect::<HashMap<_, _>>();
 
-        let leader = scenario.decision.view().primary();
         let quorum = scenario.decision.view().quorum();
 
-        let decision_handler = DecisionHandler::default();
+        let mut decision_handler = DecisionHandler::default();
 
         scenario
             .decision
-            .set_current_state(DecisionState::Prepare(0));
+            .set_current_state(DecisionState::Prepare(false, 0));
 
-        let seq_no = scenario.decision.sequence_number();
+        let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
+        let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
-        let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
+        let _ = prepare_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
+        let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
-        let _ = prepare_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
+        let _ = commit_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
+        let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
-        let _ = commit_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
-
-        let results = decide_decision_messages(&mut scenario, &cryptos_for, &decision_handler);
+        let results = decide_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         assert_eq!(
-            quorum - 1,
+            quorum,
             results
                 .iter()
                 .filter(|decision| {
@@ -863,42 +959,47 @@ mod decision_test {
                 .count()
         );
 
+        assert!(matches!(
+            scenario.decision.current_state,
+            DecisionState::Decide(true, 3)
+        ));
+        
+        let results = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+        
         assert_eq!(
             1,
             results
                 .iter()
-                .filter(|decision| { matches!(decision, DecisionResult::Decided(Some(_), _)) })
+                .filter(|decision| {
+                    matches!(decision, DecisionResult::Decided(..))
+                })
                 .count()
         );
-
+        
         assert!(matches!(
             scenario.decision.current_state,
             DecisionState::Finally
         ));
     }
 
-    fn prepare_proposal_messages<RQ>(
+    fn prepare_proposal_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &DecisionHandler<BlankProtocol>,
+        decision_handler: &mut DecisionHandler,
         decision_log: &mut MsgLeaderDecisionLog,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
         let seq_no = scenario.decision.sequence_number();
 
-        let (rqs, digest): (Vec<StoredRequestMessage<RQ>>, _) =
-            scenario.rq_aggr.take_pool_requests();
-
         let (node, qc) = mock_leader_decision_log_new_view(scenario, cryptos_for, decision_log);
 
         scenario
             .decision
-            .set_current_state(DecisionState::Prepare(0));
+            .set_current_state(DecisionState::Prepare(false, 0));
 
-        let create_message = |node_id| {
+        let create_message = |_node_id| {
             build_proposal_hotstuff_message::<BlankProtocol>(
-                cryptos_for.get(&node_id).unwrap(),
                 seq_no,
                 ProposalType::Prepare(node.clone(), qc.clone()),
             )
@@ -959,8 +1060,6 @@ mod decision_test {
     fn test_replica_new_view() {
         let mut scenario = setup_scenario(NodeId(2));
 
-        let seq_no = scenario.decision.sequence_number();
-
         let mut msg_decision_log = MsgLeaderDecisionLog::default();
 
         let cryptos_for = scenario
@@ -974,13 +1073,10 @@ mod decision_test {
             })
             .collect::<HashMap<_, _>>();
 
-        let leader = scenario.decision.view().primary();
-        let quorum = scenario.decision.view().quorum();
-
-        let results = prepare_proposal_messages::<BlankProtocol>(
+        let results = prepare_proposal_messages(
             &mut scenario,
             &cryptos_for,
-            &DecisionHandler::default(),
+            &mut DecisionHandler::default(),
             &mut msg_decision_log,
         );
 
@@ -996,7 +1092,7 @@ mod decision_test {
 
         assert!(matches!(
             scenario.decision.current_state,
-            DecisionState::PreCommit(_)
+            DecisionState::PreCommit(..)
         ));
     }
 
@@ -1023,7 +1119,7 @@ mod decision_test {
             .for_each(|node| {
                 let crypto = crypto.get(node).unwrap();
 
-                let vote = VoteType::PrepareVote(decision.decision_header());
+                let vote = VoteType::PrepareVote(*decision.decision_header());
 
                 let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider>(
                     &**crypto, sequence, &vote,
@@ -1040,7 +1136,7 @@ mod decision_test {
             .generate_qc::<_, AtlasTHCryptoProvider>(
                 &**crypto_info,
                 scenario.decision.view(),
-                QCType::PrepareVote,
+                ProposalTypes::Prepare,
             )
             .unwrap()
     }
@@ -1048,7 +1144,7 @@ mod decision_test {
     fn pre_commit_proposal_messages<RQ>(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &DecisionHandler<BlankProtocol>,
+        decision_handler: &mut DecisionHandler,
         decision_log: &mut MsgLeaderDecisionLog,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
@@ -1062,7 +1158,6 @@ mod decision_test {
 
         let create_message = |node_id| {
             build_proposal_hotstuff_message::<BlankProtocol>(
-                cryptos_for.get(&node_id).unwrap(),
                 seq_no,
                 ProposalType::PreCommit(mocked_qc.clone()),
             )
@@ -1082,8 +1177,6 @@ mod decision_test {
     fn test_prepare_proposal() {
         let mut scenario = setup_scenario(NodeId(2));
 
-        let seq_no = scenario.decision.sequence_number();
-
         let mut msg_decision_log = MsgLeaderDecisionLog::default();
 
         let cryptos_for = scenario
@@ -1097,20 +1190,17 @@ mod decision_test {
             })
             .collect::<HashMap<_, _>>();
 
-        let leader = scenario.decision.view().primary();
-        let quorum = scenario.decision.view().quorum();
-
-        prepare_proposal_messages::<BlankProtocol>(
+        prepare_proposal_messages(
             &mut scenario,
             &cryptos_for,
-            &DecisionHandler::default(),
+            &mut DecisionHandler::default(),
             &mut msg_decision_log,
         );
 
         let results = pre_commit_proposal_messages::<BlankProtocol>(
             &mut scenario,
             &cryptos_for,
-            &DecisionHandler::default(),
+            &mut DecisionHandler::default(),
             &mut msg_decision_log,
         );
 
@@ -1126,7 +1216,7 @@ mod decision_test {
 
         assert!(matches!(
             scenario.decision.current_state,
-            DecisionState::Commit(_)
+            DecisionState::Commit(..)
         ));
     }
 }

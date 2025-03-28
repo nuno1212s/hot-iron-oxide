@@ -2,7 +2,7 @@ use crate::crypto::{
     combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner,
 };
 use crate::decisions::{DecisionNode, DecisionNodeHeader, QCType, QC};
-use crate::messages::{ProposalMessage, ProposalType, VoteMessage, VoteType};
+use crate::messages::{ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType};
 use crate::view::View;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
@@ -18,29 +18,10 @@ pub enum MsgDecisionLog {
     Replica(MsgReplicaDecisionLog),
 }
 
-#[derive(Default)]
-pub struct LeaderDecisionLog {
-    prepare_qc: Option<QC>,
-    pre_commit_qc: Option<QC>,
-    commit_qc: Option<QC>,
-}
-
-#[derive(Default)]
-pub struct ReplicaDecisionLog {
-    prepare_qc: Option<QC>,
-    locked_qc: Option<QC>,
-}
-
-pub enum DecisionLogType {
-    Leader(LeaderDecisionLog, ReplicaDecisionLog),
-    Replica(ReplicaDecisionLog),
-}
-
 #[derive(Setters, Getters, MutGetters)]
 pub struct DecisionLog<D> {
     #[getset(get = "pub(super)", set = "pub(super)")]
-    current_proposal: Option<DecisionNode<D>>,
-    decision_log_type: DecisionLogType,
+    current_proposal: Option<DecisionNode<D>>
 }
 
 pub struct VoteStore {
@@ -66,6 +47,14 @@ pub struct MsgReplicaDecisionLog {
     prepare_qc: Option<QC>,
     #[get = "pub(super)"]
     locked_qc: Option<QC>,
+}
+
+impl<RQ> DecisionLog<RQ> {
+    
+    pub fn into_decision_node(self) -> Option<DecisionNode<RQ>> {
+        self.current_proposal
+    }
+    
 }
 
 impl MsgDecisionLog {
@@ -97,72 +86,6 @@ impl MsgDecisionLog {
         }
     }
 }
-
-impl ReplicaDecisionLog {
-    pub fn set_prepare_qc(&mut self, qc: QC) {
-        self.prepare_qc = Some(qc);
-    }
-
-    pub fn set_locked_qc(&mut self, qc: QC) {
-        self.locked_qc = Some(qc);
-    }
-}
-
-impl LeaderDecisionLog {
-    pub fn set_prepare_qc(&mut self, qc: QC) {
-        self.prepare_qc = Some(qc);
-    }
-
-    pub fn set_pre_commit_qc(&mut self, qc: QC) {
-        self.pre_commit_qc = Some(qc);
-    }
-
-    pub fn set_commit_qc(&mut self, qc: QC) {
-        self.commit_qc = Some(qc);
-    }
-}
-
-impl<D> DecisionLog<D> {
-    pub fn new(decision_log_type: DecisionLogType) -> Self {
-        Self {
-            current_proposal: Default::default(),
-            decision_log_type,
-        }
-    }
-
-    pub fn into_current_proposal(self) -> Option<DecisionNode<D>> {
-        self.current_proposal
-    }
-
-    pub fn as_replica(&self) -> &ReplicaDecisionLog {
-        match &self.decision_log_type {
-            DecisionLogType::Replica(replica) => replica,
-            DecisionLogType::Leader(_, replica) => replica,
-        }
-    }
-
-    pub fn as_mut_replica(&mut self) -> &mut ReplicaDecisionLog {
-        match &mut self.decision_log_type {
-            DecisionLogType::Replica(replica) => replica,
-            DecisionLogType::Leader(_, replica) => replica,
-        }
-    }
-
-    pub fn as_leader(&self) -> &LeaderDecisionLog {
-        match &self.decision_log_type {
-            DecisionLogType::Leader(leader, _) => leader,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn as_mut_leader(&mut self) -> &mut LeaderDecisionLog {
-        match &mut self.decision_log_type {
-            DecisionLogType::Leader(leader, _) => leader,
-            _ => unreachable!(),
-        }
-    }
-}
-
 impl VoteStore {
     fn new(vote_type: QCType) -> Self {
         Self {
@@ -234,17 +157,13 @@ impl MsgLeaderDecisionLog {
         sender: NodeId,
         vote: VoteMessage,
     ) -> Result<bool, VoteAcceptError> {
-        let (vote, signature) = vote.into_inner();
+        let (vote_type_msg, signature) = vote.into_inner();
 
-        match vote {
-            VoteType::NewView(_) => Err(VoteAcceptError::NewViewVoteNotAcceptable),
+        match vote_type_msg {
+            VoteType::NewView(_) => Ok(self.new_view_store().accept_new_view(sender, VoteMessage::new(vote_type_msg, signature))?),
             VoteType::PrepareVote(vote) => Ok(self.prepare_qc.accept_vote(sender, vote, signature)),
-            VoteType::PreCommitVote(vote) => {
-                Ok(self.pre_commit_qc.accept_vote(sender, vote, signature))
-            }
-            VoteType::CommitVote(commit_vote) => {
-                Ok(self.commit_qc.accept_vote(sender, commit_vote, signature))
-            }
+            VoteType::PreCommitVote(vote) => Ok(self.pre_commit_qc.accept_vote(sender, vote, signature)),
+            VoteType::CommitVote(commit_vote) => Ok(self.commit_qc.accept_vote(sender, commit_vote, signature)),
         }
     }
 
@@ -252,16 +171,19 @@ impl MsgLeaderDecisionLog {
         &mut self,
         crypto_info: &CR,
         view: &View,
-        qc_type: QCType,
+        qc_type: ProposalTypes,
     ) -> Result<QC, VoteStoreError<CP::CombinationError>>
     where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
     {
         match qc_type {
-            QCType::PrepareVote => self.prepare_qc.generate_qc::<CR, CP>(crypto_info, view),
-            QCType::PreCommitVote => self.pre_commit_qc.generate_qc::<CR, CP>(crypto_info, view),
-            QCType::CommitVote => self.commit_qc.generate_qc::<CR, CP>(crypto_info, view),
+            ProposalTypes::Prepare => {
+                unreachable!()
+            }
+            ProposalTypes::PreCommit => self.prepare_qc.generate_qc::<CR, CP>(crypto_info, view),
+            ProposalTypes::Commit => self.pre_commit_qc.generate_qc::<CR, CP>(crypto_info, view),
+            ProposalTypes::Decide => self.commit_qc.generate_qc::<CR, CP>(crypto_info, view),
         }
     }
 }
@@ -304,15 +226,15 @@ impl NewViewStore {
         &mut self,
         voter: NodeId,
         vote_message: VoteMessage,
-    ) -> Result<(), NewViewAcceptError> {
+    ) -> Result<bool, NewViewAcceptError> {
         let (qc, sig) = match vote_message.into_inner() {
             (VoteType::NewView(qc), sig) => (qc.clone(), sig),
             _ => return Err(NewViewAcceptError::WrongMessageType),
         };
 
-        self.new_view.entry(qc).or_default().insert(voter, sig);
+        let previous = self.new_view.entry(qc).or_default().insert(voter, sig);
 
-        Ok(())
+        Ok(previous.is_none())
     }
 
     pub(in super::super) fn get_high_qc(&self) -> Option<&QC> {
@@ -363,6 +285,14 @@ impl NewViewStore {
     }
 }
 
+impl<RQ> Default for DecisionLog<RQ> {
+    fn default() -> Self {
+        Self {
+            current_proposal: Option::None,
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum DecisionError {
     #[error("The received prepare certificate is empty")]
@@ -380,7 +310,7 @@ pub enum VoteStoreError<CS: Error> {
 #[derive(Error, Debug)]
 pub enum VoteAcceptError {
     #[error("Cannot accept new view vote in the log.")]
-    NewViewVoteNotAcceptable,
+    NewViewAcceptError(#[from] NewViewAcceptError),
 }
 
 #[derive(Error, Debug)]

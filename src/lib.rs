@@ -22,6 +22,7 @@ use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
 use std::sync::Arc;
 use tracing::trace;
+use atlas_core::timeouts::TimeOutable;
 
 pub mod config;
 pub mod crypto;
@@ -119,7 +120,17 @@ where
         &mut self,
         timeout: Vec<ModTimeout>,
     ) -> Result<OPExResult<RQ, HotIronOxSer<RQ>>> {
-        todo!()
+        
+        timeout.iter()
+            .map(ModTimeout::extra_info)
+            .map(|info| info.map(TimeOutable::as_any))
+            .for_each(|any| {
+                if let Some(seq_no) = any.as_ref().and_then(|any| any.downcast_ref::<SeqNo>()) {
+                    self.hot_stuff_protocol.handle_next_view_for_decision(*seq_no);
+                }
+            });
+        
+        Ok(OPExecResult::MessageProcessedNoUpdate)
     }
 }
 

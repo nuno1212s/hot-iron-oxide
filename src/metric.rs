@@ -1,5 +1,7 @@
+use crate::messages::{ProposalType, ProposalTypes, VoteType, VoteTypes};
 use atlas_metrics::metrics::{metric_duration, MetricKind};
 use atlas_metrics::{MetricLevel, MetricRegistry};
+use enum_map::EnumMap;
 use getset::Getters;
 use std::time::{Duration, Instant};
 
@@ -65,7 +67,10 @@ pub fn metrics() -> Vec<MetricRegistry> {
 }
 
 pub(crate) enum ConsensusDecisionMetric {
-    Leader(LeaderConsensusDecisionMetric, ReplicaConsensusDecisionMetric),
+    Leader(
+        LeaderConsensusDecisionMetric,
+        ReplicaConsensusDecisionMetric,
+    ),
     Replica(ReplicaConsensusDecisionMetric),
 }
 
@@ -77,33 +82,26 @@ macro_rules! update_instant {
     };
 }
 
-#[derive(Default, Getters)]
+#[derive(Getters)]
 pub(crate) struct LeaderConsensusDecisionMetric {
-    first_new_view_received: Option<Instant>,
-    prepare_sent_time: Option<Instant>,
-    first_prepare_vote: Option<Instant>,
-    pre_commit_sent_time: Option<Instant>,
-    first_pre_commit_vote: Option<Instant>,
-    commit_sent_time: Option<Instant>,
-    first_commit_vote: Option<Instant>,
-    decided_sent_time: Option<Instant>,
-    decided_time: Option<Instant>,
+    received_votes: EnumMap<VoteTypes, Option<Instant>>,
+    sent_proposals: EnumMap<ProposalTypes, Option<Instant>>,
 }
 
-#[derive(Default, Getters)]
+#[derive(Getters)]
 pub(crate) struct ReplicaConsensusDecisionMetric {
-    start_instant: Option<Instant>,
-    prepare_received: Option<Instant>,
-    pre_commit_received: Option<Instant>,
-    commit_received: Option<Instant>,
-    decided_received: Option<Instant>,
-    decided_time: Option<Instant>,
+    received_proposals: EnumMap<ProposalTypes, Option<Instant>>,
+    sent_votes: EnumMap<VoteTypes, Option<Instant>>,
+    finalized_proposal: Option<Instant>,
 }
 
 impl ConsensusDecisionMetric {
     #[must_use]
     pub(crate) fn leader() -> Self {
-        Self::Leader(LeaderConsensusDecisionMetric::default(), ReplicaConsensusDecisionMetric::default())
+        Self::Leader(
+            LeaderConsensusDecisionMetric::default(),
+            ReplicaConsensusDecisionMetric::default(),
+        )
     }
 
     #[must_use]
@@ -126,125 +124,123 @@ impl ConsensusDecisionMetric {
 }
 
 impl LeaderConsensusDecisionMetric {
-    pub(crate) fn register_new_view_received(&mut self) {
-        update_instant!(self, first_new_view_received, Instant::now());
+    pub(crate) fn register_vote_received(&mut self, vote_type: VoteTypes) {
+        if self.received_votes[vote_type].is_none() {
+            self.received_votes[vote_type] = Some(Instant::now());
+        }
     }
 
-    pub(crate) fn register_prepare_sent(&mut self) {
-        metric_duration(
-            PREPARE_LATENCY_ID,
-            self.first_new_view_received
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, prepare_sent_time, Instant::now());
-    }
+    pub(crate) fn register_proposal_sent(&mut self, proposal_type: ProposalTypes) {
+        self.sent_proposals[proposal_type] = Some(Instant::now());
 
-    pub(crate) fn register_prepare_vote(&mut self) {
-        update_instant!(self, first_prepare_vote, Instant::now());
-    }
-
-    pub(crate) fn register_pre_commit_sent(&mut self) {
-        metric_duration(
-            PRE_COMMIT_LATENCY_ID,
-            self.first_prepare_vote
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, pre_commit_sent_time, Instant::now());
-    }
-
-    pub(crate) fn register_pre_commit_vote(&mut self) {
-        update_instant!(self, first_pre_commit_vote, Instant::now());
-    }
-
-    pub(crate) fn register_commit_sent(&mut self) {
-        metric_duration(
-            COMMIT_LATENCY_ID,
-            self.first_pre_commit_vote
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, commit_sent_time, Instant::now());
-    }
-
-    pub(crate) fn register_commit_vote(&mut self) {
-        update_instant!(self, first_commit_vote, Instant::now());
-    }
-
-    pub(crate) fn register_decided_sent(&mut self) {
-        metric_duration(
-            DECIDED_LATENCY_ID,
-            self.first_commit_vote
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, decided_sent_time, Instant::now());
-    }
-
-    pub(crate) fn register_decided(&mut self) {
-        metric_duration(
-            END_TO_END_LATENCY_ID,
-            self.first_new_view_received
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, decided_time, Instant::now());
+        match proposal_type {
+            ProposalTypes::Prepare => {
+                metric_duration(
+                    PREPARE_LATENCY_ID,
+                    self.received_votes[VoteTypes::NewView]
+                        .as_ref()
+                        .map_or_else(Duration::default, Instant::elapsed),
+                );
+            }
+            ProposalTypes::PreCommit => {
+                metric_duration(
+                    PRE_COMMIT_LATENCY_ID,
+                    self.received_votes[VoteTypes::PrepareVote]
+                        .as_ref()
+                        .map_or_else(Duration::default, Instant::elapsed),
+                );
+            }
+            ProposalTypes::Commit => {
+                metric_duration(
+                    COMMIT_LATENCY_ID,
+                    self.received_votes[VoteTypes::PreCommitVote]
+                        .as_ref()
+                        .map_or_else(Duration::default, Instant::elapsed),
+                );
+            }
+            ProposalTypes::Decide => {
+                metric_duration(
+                    DECIDED_LATENCY_ID,
+                    self.received_votes[VoteTypes::CommitVote]
+                        .as_ref()
+                        .map_or_else(Duration::default, Instant::elapsed),
+                );
+            }
+        }
     }
 }
 
 impl ReplicaConsensusDecisionMetric {
-    pub(crate) fn register_new_view_sent(&mut self) {
-        update_instant!(self, start_instant, Instant::now());
+    pub(crate) fn register_vote_sent(&mut self, vote_type: VoteTypes) {
+        self.sent_votes[vote_type] = Some(Instant::now());
     }
 
-    pub(crate) fn register_prepare_received(&mut self) {
+    pub(crate) fn register_proposal_received(&mut self, proposal_type: ProposalTypes) {
+        self.received_proposals[proposal_type] = Some(Instant::now());
+
+        match proposal_type {
+            ProposalTypes::Prepare => {
+                metric_duration(
+                    PREPARE_LATENCY_ID,
+                    self.sent_votes[VoteTypes::NewView]
+                        .as_ref()
+                        .map_or_else(Duration::default, Instant::elapsed),
+                );
+            }
+            ProposalTypes::PreCommit => {
+                metric_duration(
+                    PRE_COMMIT_LATENCY_ID,
+                    self.sent_votes[VoteTypes::PreCommitVote]
+                        .as_ref()
+                        .map_or_else(Duration::default, Instant::elapsed),
+                );
+            }
+            ProposalTypes::Commit => {
+                metric_duration(
+                    PRE_COMMIT_LATENCY_ID,
+                    self.sent_votes[VoteTypes::PreCommitVote]
+                        .as_ref()
+                        .map_or_else(Duration::default, Instant::elapsed),
+                );
+            }
+            ProposalTypes::Decide => {
+                metric_duration(
+                    COMMIT_LATENCY_ID,
+                    self.sent_votes[VoteTypes::CommitVote]
+                        .as_ref()
+                        .map_or_else(Duration::default, Instant::elapsed),
+                );
+            }
+        }
+    }
+    
+    pub(crate) fn register_decision_finalized(&mut self) {
+        self.finalized_proposal = Some(Instant::now());
+        
         metric_duration(
-            PREPARE_LATENCY_ID,
-            self.start_instant
+            DECIDED_LATENCY_ID,
+            self.received_proposals[ProposalTypes::Commit]
                 .as_ref()
                 .map_or_else(Duration::default, Instant::elapsed),
         );
-        update_instant!(self, prepare_received, Instant::now());
     }
+}
 
-    pub(crate) fn register_pre_commit_proposal(&mut self) {
-        metric_duration(
-            PRE_COMMIT_LATENCY_ID,
-            self.prepare_received
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, pre_commit_received, Instant::now());
+impl Default for ReplicaConsensusDecisionMetric {
+    fn default() -> Self {
+        Self {
+            received_proposals: EnumMap::default(),
+            sent_votes: EnumMap::default(),
+            finalized_proposal: None,
+        }
     }
+}
 
-    pub(crate) fn register_commit_proposal(&mut self) {
-        metric_duration(
-            COMMIT_LATENCY_ID,
-            self.pre_commit_received
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, commit_received, Instant::now());
-    }
-
-    pub(crate) fn register_decided_received(&mut self) {
-        metric_duration(
-            COMMIT_LATENCY_ID,
-            self.commit_received
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, decided_received, Instant::now());
-    }
-
-    pub(crate) fn register_decided(&mut self) {
-        metric_duration(
-            END_TO_END_LATENCY_ID,
-            self.start_instant
-                .as_ref()
-                .map_or_else(Duration::default, Instant::elapsed),
-        );
-        update_instant!(self, decided_time, Instant::now());
+impl Default for LeaderConsensusDecisionMetric {
+    fn default() -> Self {
+        Self {
+            received_votes: EnumMap::default(),
+            sent_proposals: EnumMap::default(),
+        }
     }
 }

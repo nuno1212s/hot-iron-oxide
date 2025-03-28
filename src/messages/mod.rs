@@ -1,5 +1,6 @@
 pub mod serialize;
 
+use enum_map::Enum;
 use crate::decisions::{DecisionNode, DecisionNodeHeader, QC};
 use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -7,9 +8,12 @@ use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
+use strum::EnumDiscriminants;
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, EnumDiscriminants)]
+#[strum_discriminants(derive(Enum))]
+#[strum_discriminants(name(VoteTypes))]
 pub enum VoteType {
     NewView(Option<QC>),
     PrepareVote(DecisionNodeHeader),
@@ -27,7 +31,9 @@ pub struct VoteMessage {
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone)]
+#[derive(Clone, EnumDiscriminants)]
+#[strum_discriminants(derive(Enum))]
+#[strum_discriminants(name(ProposalTypes))]
 pub enum ProposalType<D> {
     Prepare(DecisionNode<D>, QC),
     PreCommit(QC),

@@ -138,9 +138,6 @@ where
 
         if index < self.decisions.len() {
             self.decisions.get_mut(index).unwrap().next_view_received();
-            
-            
-            
         } else {
             warn!("Ignoring next view message for seq no {:?} as we are already in seq no {:?}", seq_no, self.sequence_number());
         }

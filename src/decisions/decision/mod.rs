@@ -1,17 +1,18 @@
+mod chained;
 mod test;
 
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
 use crate::decisions::log::{
-    DecisionLog, DecisionLogType, LeaderDecisionLog, MsgDecisionLog, MsgLeaderDecisionLog,
-    MsgReplicaDecisionLog, NewViewAcceptError, NewViewGenerateError, ReplicaDecisionLog,
-    VoteAcceptError, VoteStoreError,
+    DecisionLog, MsgDecisionLog, MsgLeaderDecisionLog, MsgReplicaDecisionLog, NewViewAcceptError,
+    NewViewGenerateError, VoteAcceptError, VoteStoreError,
 };
 use crate::decisions::msg_queue::HotStuffTBOQueue;
 use crate::decisions::req_aggr::ReqAggregator;
-use crate::decisions::{DecisionHandler, DecisionNode, DecisionNodeHeader, QCType, QC};
+use crate::decisions::{DecisionHandler, DecisionNode, DecisionNodeHeader, QC};
 use crate::messages::serialize::HotIronOxSer;
 use crate::messages::{
-    HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, VoteMessage, VoteType,
+    HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
+    VoteType, VoteTypes,
 };
 use crate::metric::ConsensusDecisionMetric;
 use crate::view::View;
@@ -28,7 +29,7 @@ use getset::{Getters, Setters};
 use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug)]
 pub enum DecisionState {
@@ -40,7 +41,6 @@ pub enum DecisionState {
     Finally,
     NextView,
 }
-
 
 #[derive(Debug, Display)]
 pub enum DecisionFinalizationResult {
@@ -97,12 +97,6 @@ where
             MsgDecisionLog::Replica(MsgReplicaDecisionLog::default())
         };
 
-        let decision_log_type = if view.primary() == node_id {
-            DecisionLogType::Leader(LeaderDecisionLog::default(), ReplicaDecisionLog::default())
-        } else {
-            DecisionLogType::Replica(ReplicaDecisionLog::default())
-        };
-
         let consensus_metric = if view.primary() == node_id {
             ConsensusDecisionMetric::leader()
         } else {
@@ -115,7 +109,7 @@ where
             current_state: DecisionState::Init,
             decision_queue: HotStuffTBOQueue::default(),
             msg_decision_log,
-            decision_log: DecisionLog::new(decision_log_type),
+            decision_log: DecisionLog::default(),
             consensus_metric,
         }
     }
@@ -133,7 +127,7 @@ where
         CP: CryptoProvider,
     {
         match self.current_state {
-            DecisionState::Init  => {
+            DecisionState::Init => {
                 threadpool::execute({
                     let network = network.clone();
                     let crypto_info = crypto_info.clone();
@@ -166,7 +160,9 @@ where
                     }
                 });
 
-                self.consensus_metric.as_replica().register_new_view_sent();
+                self.consensus_metric
+                    .as_replica()
+                    .register_vote_sent(VoteTypes::NewView);
                 self.current_state = DecisionState::Prepare(false, 0);
 
                 DecisionPollResult::Recv
@@ -269,81 +265,286 @@ where
             DecisionState::Init | DecisionState::Finally | DecisionState::NextView => {
                 Ok(DecisionResult::MessageIgnored)
             }
-            DecisionState::Prepare(_, _) if is_leader => {
-                match message.message().message() {
-                    HotFeOxMsgType::Proposal(_) => {
-                        Ok(self.process_message_prepare::<NT, CR, CP>(
-                            message,
-                            network,
-                            dec_handler,
-                            crypto,
-                        ))
-                    }
-                    HotFeOxMsgType::Vote(_) => {
-                        self.process_message_prepare_leader::<NT, CR, CP, RQA>(
-                                message, network, crypto, req_aggr,
-                            )
-                    }
-                }
-                
-            },
-            DecisionState::Prepare(_, _) => Ok(self.process_message_prepare::<NT, CR, CP>(
-                message,
-                network,
-                dec_handler,
-                crypto,
-            )),
-            DecisionState::PreCommit(_, _) if is_leader => match &message.message().message() {
-                HotFeOxMsgType::Proposal(_) => Ok(self.process_message_pre_commit::<NT, CR, CP>(
-                    message,
-                    network,
-                    dec_handler,
-                    crypto,
-                )),
-                HotFeOxMsgType::Vote(_) => {
-                    self.process_message_pre_commit_leader::<NT, CR, CP>(message, network, crypto)
-                }
-            },
-            DecisionState::PreCommit(_, _) => Ok(self.process_message_pre_commit::<NT, CR, CP>(
-                message,
-                network,
-                dec_handler,
-                crypto,
-            )),
-            DecisionState::Commit(_, _) if is_leader => match &message.message().message() {
-                HotFeOxMsgType::Proposal(_) => Ok(self.process_message_commit::<NT, CR, CP>(
-                    message,
-                    network,
-                    dec_handler,
-                    crypto,
-                )),
-                HotFeOxMsgType::Vote(_) => {
-                    self.process_message_commit_leader::<NT, CR, CP>(message, network, crypto)
-                }
-            },
-            DecisionState::Commit(_, _) => Ok(self.process_message_commit::<NT, CR, CP>(
-                message,
-                network,
-                dec_handler,
-                crypto,
-            )),
-            DecisionState::Decide(_, _) if is_leader => match &message.message().message() {
-                HotFeOxMsgType::Vote(_) => self.process_message_decide_leader::<NT, CR, CP>(
+            DecisionState::Prepare(_, _) if is_leader => match message.message().message() {
+                HotFeOxMsgType::Proposal(_) => self.process_message_prepare::<NT, CR, CP>(
                     message,
                     network,
                     dec_handler,
                     crypto,
                 ),
+                HotFeOxMsgType::Vote(_) => self.process_message_prepare_leader::<NT, CR, CP, RQA>(
+                    message, network, crypto, req_aggr,
+                ),
+            },
+            DecisionState::Prepare(_, _) => {
+                self.process_message_prepare::<NT, CR, CP>(message, network, dec_handler, crypto)
+            }
+            DecisionState::PreCommit(_, _) if is_leader => match &message.message().message() {
+                HotFeOxMsgType::Proposal(_) => self.process_message_pre_commit::<NT, CR, CP>(
+                    message,
+                    network,
+                    dec_handler,
+                    crypto,
+                ),
+                HotFeOxMsgType::Vote(_) => self
+                    .process_message_pre_commit_leader::<NT, CR, CP, RQA>(
+                        message, network, crypto, req_aggr,
+                    ),
+            },
+            DecisionState::PreCommit(_, _) => {
+                self.process_message_pre_commit::<NT, CR, CP>(message, network, dec_handler, crypto)
+            }
+            DecisionState::Commit(_, _) if is_leader => match &message.message().message() {
                 HotFeOxMsgType::Proposal(_) => {
-                    Ok(self.process_message_decide::<NT, CR, CP>(message, dec_handler))
+                    self.process_message_commit::<NT, CR, CP>(message, network, dec_handler, crypto)
+                }
+                HotFeOxMsgType::Vote(_) => self.process_message_commit_leader::<NT, CR, CP, RQA>(
+                    message, network, crypto, req_aggr,
+                ),
+            },
+            DecisionState::Commit(_, _) => {
+                self.process_message_commit::<NT, CR, CP>(message, network, dec_handler, crypto)
+            }
+            DecisionState::Decide(_, _) if is_leader => match &message.message().message() {
+                HotFeOxMsgType::Vote(_) => self.process_message_decide_leader::<NT, CR, CP, RQA>(
+                    message, network, crypto, req_aggr,
+                ),
+                HotFeOxMsgType::Proposal(_) => {
+                    self.process_message_decide::<NT, CR, CP>(message, dec_handler, network, crypto)
                 }
             },
             DecisionState::Decide(_, _) => {
-                Ok(self.process_message_decide::<NT, CR, CP>(message, dec_handler))
+                self.process_message_decide::<NT, CR, CP>(message, dec_handler, network, crypto)
             }
         }
     }
-    
+
+    fn process_message_leader<NT, CR, CP, RQA>(
+        &mut self,
+        vote_message: ShareableMessage<HotFeOxMsg<RQ>>,
+        network: &Arc<NT>,
+        crypto: &Arc<CR>,
+        req_aggr: &Arc<RQA>,
+    ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
+    where
+        NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
+        CR: CryptoInformationProvider,
+        RQA: ReqAggregator<RQ>,
+        CP: CryptoProvider,
+    {
+        let (vt_header, HotFeOxMsgType::Vote(vt_msg)) =
+            (vote_message.header(), vote_message.message().message())
+        else {
+            unreachable!("Message received is not a vote message")
+        };
+
+        let (DecisionState::Prepare(proposal_sent, received_votes)
+        | DecisionState::PreCommit(proposal_sent, received_votes)
+        | DecisionState::Commit(proposal_sent, received_votes)
+        | DecisionState::Decide(proposal_sent, received_votes)) = &mut self.current_state
+        else {
+            unreachable!("Leader decision state is not Prepare, PreCommit, Commit or Decide")
+        };
+
+        self.consensus_metric
+            .as_leader()
+            .register_vote_received(vt_msg.vote_type().into());
+
+        let leader_log = self
+            .msg_decision_log
+            .as_mut_leader()
+            .ok_or(DecisionError::NoLeaderMessageLog)?;
+
+        *received_votes += 1;
+
+        leader_log.accept_vote(vt_header.from(), vt_msg.clone())?;
+
+        if *received_votes >= self.view.quorum() && !*proposal_sent {
+            *proposal_sent = true;
+
+            let proposal_type = if let VoteType::NewView(_) = vt_msg.vote_type() {
+                let high_qc = leader_log.new_view_store().get_high_qc();
+
+                let (pooled_request, digest) = req_aggr.take_pool_requests();
+
+                let node = if let Some(qc) = high_qc {
+                    DecisionNode::create_leaf(&qc.decision_node(), digest, pooled_request)
+                } else {
+                    DecisionNode::create_root_leaf(&self.view, digest, pooled_request)
+                };
+
+                let new_qc = leader_log
+                    .new_view_store()
+                    .create_new_qc::<_, CP>(&**crypto, node.decision_header())?;
+
+                self.consensus_metric
+                    .as_leader()
+                    .register_proposal_sent(ProposalTypes::Decide);
+
+                ProposalType::Prepare(node, new_qc)
+            } else {
+                let proposal_type = match vt_msg.vote_type() {
+                    VoteType::PrepareVote(_) => ProposalTypes::PreCommit,
+                    VoteType::PreCommitVote(_) => ProposalTypes::Commit,
+                    VoteType::CommitVote(_) => ProposalTypes::Decide,
+                    VoteType::NewView(_) => unreachable!(),
+                };
+
+                let qc =
+                    leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, proposal_type)?;
+
+                self.consensus_metric
+                    .as_leader()
+                    .register_proposal_sent(proposal_type);
+
+                match proposal_type {
+                    ProposalTypes::PreCommit => ProposalType::PreCommit(qc),
+                    ProposalTypes::Commit => ProposalType::Commit(qc),
+                    ProposalTypes::Decide => ProposalType::Decide(qc),
+                    ProposalTypes::Prepare => unreachable!(),
+                }
+            };
+
+            let proposal_message = ProposalMessage::new(proposal_type);
+
+            let msg = HotFeOxMsgType::Proposal(proposal_message);
+
+            let _ = network.broadcast(
+                HotFeOxMsg::new(self.view.sequence_number(), msg),
+                self.view.quorum_members().iter().copied(),
+            );
+
+            Ok(DecisionResult::DecisionProgressed(None, None, vote_message))
+        } else if *proposal_sent {
+            Ok(DecisionResult::MessageIgnored)
+        } else {
+            Ok(DecisionResult::DecisionProgressed(None, None, vote_message))
+        }
+    }
+
+    fn process_message_replica<NT, CR, CP>(
+        &mut self,
+        message: ShareableMessage<HotFeOxMsg<RQ>>,
+        dec_handler: &mut DecisionHandler,
+        network: &Arc<NT>,
+        crypto: &Arc<CR>,
+    ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
+    where
+        NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
+        CR: CryptoInformationProvider,
+        CP: CryptoProvider,
+    {
+        let (_, HotFeOxMsgType::Proposal(proposal)) =
+            (message.header(), message.message().message())
+        else {
+            unreachable!("Message received is not a proposal message")
+        };
+
+        self.consensus_metric
+            .as_replica()
+            .register_proposal_received(proposal.proposal_type().into());
+
+        let (vote_type, qc, node) = match &mut self.current_state {
+            DecisionState::Prepare(_, _) => {
+                let ProposalType::Prepare(node, qc) = proposal.proposal_type() else {
+                    unreachable!()
+                };
+
+                if !dec_handler.safe_node(node, qc) {
+                    warn!(
+                        "Node {:?}, QC {:?} does not extend from {:?}",
+                        node,
+                        qc,
+                        dec_handler.latest_qc()
+                    );
+
+                    return Err(DecisionError::InvalidDecisionNode);
+                }
+
+                self.decision_log.set_current_proposal(Some(node.clone()));
+
+                dec_handler.install_latest_prepare_qc(qc.clone());
+
+                self.current_state = DecisionState::PreCommit(false, 0);
+
+                (
+                    Some(VoteType::PrepareVote(*node.decision_header())),
+                    qc.clone(),
+                    Some(qc.decision_node()),
+                )
+            }
+            DecisionState::PreCommit(_, _)
+            | DecisionState::Commit(_, _)
+            | DecisionState::Decide(_, _) => match proposal.proposal_type() {
+                ProposalType::PreCommit(qc) => {
+                    self.current_state = DecisionState::Commit(false, 0);
+
+                    (
+                        Some(VoteType::PreCommitVote(qc.decision_node())),
+                        qc.clone(),
+                        None,
+                    )
+                }
+                ProposalType::Commit(qc) => {
+                    self.current_state = DecisionState::Decide(false, 0);
+
+                    (
+                        Some(VoteType::CommitVote(qc.decision_node())),
+                        qc.clone(),
+                        None,
+                    )
+                }
+                ProposalType::Decide(qc) => {
+                    self.current_state = DecisionState::Finally;
+
+                    (None, qc.clone(), None)
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!("Attempting to process a proposal message in an invalid state"),
+        };
+
+        if let Some(vote_type) = vote_type {
+            self.consensus_metric
+                .as_replica()
+                .register_vote_sent((&vote_type).into());
+
+            threadpool::execute({
+                let network = network.clone();
+
+                let crypto = crypto.clone();
+
+                let view = self.view.clone();
+
+                move || {
+                    // Send the message signing processing to the threadpool
+
+                    let msg_signature = get_partial_signature_for_message::<CR, CP>(
+                        &*crypto,
+                        view.sequence_number(),
+                        &vote_type,
+                    );
+
+                    let vote_msg = HotFeOxMsgType::Vote(VoteMessage::new(vote_type, msg_signature));
+
+                    let _ = network.send(
+                        HotFeOxMsg::new(view.sequence_number(), vote_msg),
+                        view.primary(),
+                        true,
+                    );
+                }
+            });
+
+            Ok(DecisionResult::DecisionProgressed(
+                Some(qc.clone()),
+                node,
+                message,
+            ))
+        } else {
+            Ok(DecisionResult::Decided(Some(qc), message))
+        }
+    }
+
     fn process_message_prepare_leader<NT, CR, CP, RQA>(
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
@@ -357,20 +558,18 @@ where
         RQA: ReqAggregator<RQ>,
         CP: CryptoProvider,
     {
-        let DecisionState::Prepare(sent_prepare, received) = &mut self.current_state else {
-            unreachable!("Leader decision state is not Prepare")
-        };
-
-        let vote_message = match message.message().clone().into() {
+        match message.message().message() {
             HotFeOxMsgType::Vote(vote_msg)
                 if self.view.sequence_number() == message.sequence_number() =>
             {
                 if let VoteType::NewView(_) = vote_msg.vote_type() {
-                    vote_msg
+                    self.process_message_leader::<NT, CR, CP, RQA>(
+                        message, network, crypto, req_aggr,
+                    )
                 } else {
                     self.decision_queue.queue_message(message);
 
-                    return Ok(DecisionResult::MessageQueued);
+                    Ok(DecisionResult::MessageQueued)
                 }
             }
             _ => {
@@ -378,61 +577,8 @@ where
                 // All proposal messages are dropped or
                 // The received message does not match our sequence number
 
-                return Ok(DecisionResult::MessageIgnored);
+                Ok(DecisionResult::MessageIgnored)
             }
-        };
-
-        self.consensus_metric
-            .as_leader()
-            .register_new_view_received();
-        let leader_log = self.msg_decision_log.as_mut_leader().unwrap();
-
-        *received += 1;
-
-        leader_log
-            .new_view_store()
-            .accept_new_view(message.header().from(), vote_message)?;
-
-        if *received >= self.view.quorum() && !*sent_prepare {
-            *sent_prepare = true;
-            
-            let high_qc = leader_log.new_view_store().get_high_qc();
-
-            let (pooled_request, digest) = req_aggr.take_pool_requests();
-
-            let node = if let Some(qc) = high_qc {
-                DecisionNode::create_leaf(&qc.decision_node(), digest, pooled_request)
-            } else {
-                DecisionNode::create_root_leaf(&self.view, digest, pooled_request)
-            };
-
-            self.decision_log.set_current_proposal(Some(node.clone()));
-
-            let decision_header = *node.decision_header();
-
-            let new_qc = leader_log
-                .new_view_store()
-                .create_new_qc::<_, CP>(&**crypto, node.decision_header())?;
-
-            let msg = HotFeOxMsgType::Proposal(ProposalMessage::new(ProposalType::Prepare(
-                node,
-                new_qc.clone(),
-            )));
-
-            let _ = network.broadcast(
-                HotFeOxMsg::new(self.view.sequence_number(), msg),
-                self.view.quorum_members().iter().copied(),
-            );
-
-            self.consensus_metric.as_leader().register_prepare_sent();
-
-            Ok(DecisionResult::DecisionProgressed(
-                Some(new_qc),
-                Some(decision_header),
-                message,
-            ))
-        } else {
-            Ok(DecisionResult::DecisionProgressed(None, None, message))
         }
     }
 
@@ -442,161 +588,68 @@ where
         network: &Arc<NT>,
         dec_handler: &mut DecisionHandler,
         crypto: &Arc<CR>,
-    ) -> DecisionResult<RQ>
-    where
-        NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
-        CR: CryptoInformationProvider,
-        CP: CryptoProvider,
-    {
-        let (node, qc) = match message.message().clone().into() {
-            HotFeOxMsgType::Proposal(proposal)
-                if self.view.sequence_number() == message.message().sequence_number()
-                    && message.header().from() == self.leader() =>
-            {
-                if let ProposalType::Prepare(node, qc) = proposal.into() {
-                    (node, qc)
-                } else {
-                    self.decision_queue.queue_message(message);
-
-                    return DecisionResult::MessageQueued;
-                }
-            }
-            _ => {
-                // A non leader can never receive vote messages, they can only receive
-                // Proposals which they can vote on
-
-                return DecisionResult::MessageIgnored;
-            }
-        };
-
-        if !dec_handler.safe_node(&node, &qc) {
-            debug!(
-                "Node {:?}, QC {:?} does not extend from {:?}",
-                node,
-                qc,
-                dec_handler.latest_qc()
-            );
-
-           return DecisionResult::MessageIgnored
-        }
-        
-        let short_node = *node.decision_header();
-
-        self.decision_log.set_current_proposal(Some(node.clone()));
-        dec_handler.install_latest_prepare_qc(qc.clone());
-
-        threadpool::execute({
-            let network = network.clone();
-
-            let crypto = crypto.clone();
-
-            let view = self.view.clone();
-
-            move || {
-                // Send the message signing processing to the threadpool
-                let prepare_vote = VoteType::PrepareVote(short_node);
-
-                let msg_signature = get_partial_signature_for_message::<CR, CP>(
-                    &*crypto,
-                    view.sequence_number(),
-                    &prepare_vote,
-                );
-
-                let vote_msg =
-                    HotFeOxMsgType::Vote(VoteMessage::new(prepare_vote, msg_signature));
-
-                let _ = network.send(
-                    HotFeOxMsg::new(view.sequence_number(), vote_msg),
-                    view.primary(),
-                    true,
-                );
-            }
-        });
-
-        self.consensus_metric
-            .as_replica()
-            .register_prepare_received();
-        self.current_state = DecisionState::PreCommit(false, 0);
-
-        DecisionResult::DecisionProgressed(None, Some(short_node), message)
-    }
-
-    fn process_message_pre_commit_leader<NT, CR, CP>(
-        &mut self,
-        message: ShareableMessage<HotFeOxMsg<RQ>>,
-        network: &Arc<NT>,
-        crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
         NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
     {
-        let DecisionState::PreCommit(sent_pre_commit, received) = &mut self.current_state else {
-            unreachable!("Leader decision state is not PreCommit")
-        };
+        match message.message().clone().into() {
+            HotFeOxMsgType::Proposal(proposal)
+                if self.view.sequence_number() == message.message().sequence_number()
+                    && message.header().from() == self.leader() =>
+            {
+                if let ProposalType::Prepare(_, _) = proposal.into() {
+                    self.process_message_replica::<NT, CR, CP>(
+                        message,
+                        dec_handler,
+                        network,
+                        crypto,
+                    )
+                } else {
+                    self.decision_queue.queue_message(message);
 
-        let vote_msg = match message.message().message() {
+                    Ok(DecisionResult::MessageQueued)
+                }
+            }
+            _ => {
+                // A non leader can never receive vote messages, they can only receive
+                // Proposals which they can vote on
+
+                Ok(DecisionResult::MessageIgnored)
+            }
+        }
+    }
+
+    fn process_message_pre_commit_leader<NT, CR, CP, RQA>(
+        &mut self,
+        message: ShareableMessage<HotFeOxMsg<RQ>>,
+        network: &Arc<NT>,
+        crypto: &Arc<CR>,
+        rqa: &Arc<RQA>,
+    ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
+    where
+        NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
+        CR: CryptoInformationProvider,
+        CP: CryptoProvider,
+        RQA: ReqAggregator<RQ>,
+    {
+        match message.message().message() {
             HotFeOxMsgType::Vote(vote_msg)
                 if message.message().sequence_number() == self.view.sequence_number() =>
             {
                 if let VoteType::PrepareVote(_) = vote_msg.vote_type() {
-                    vote_msg.clone()
+                    self.process_message_leader::<NT, CR, CP, RQA>(message, network, crypto, rqa)
                 } else {
                     self.decision_queue.queue_message(message);
 
-                    return Ok(DecisionResult::MessageQueued);
+                    Ok(DecisionResult::MessageQueued)
                 }
             }
             _ => {
                 // Leaders do not receive proposals
-                return Ok(DecisionResult::MessageIgnored);
+                Ok(DecisionResult::MessageIgnored)
             }
-        };
-
-        *received += 1;
-
-        self.consensus_metric.as_leader().register_prepare_vote();
-        let leader_log = self
-            .msg_decision_log
-            .as_mut_leader()
-            .expect("Leader decision log not available");
-
-        if !leader_log.accept_vote(message.header().from(), vote_msg)? {
-            return Ok(DecisionResult::DuplicateVote(message.header().from()));
-        }
-
-        if *received >= self.view.quorum() && !*sent_pre_commit {
-            *sent_pre_commit = true;
-            
-            let created_qc =
-                leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::PrepareVote)?;
-
-            let view_seq = self.view.sequence_number();
-
-            self.decision_log
-                .as_mut_leader()
-                .set_prepare_qc(created_qc.clone());
-
-            let view_members = self.view.quorum_members().clone();
-
-            let prop = ProposalType::PreCommit(created_qc.clone());
-
-            let proposal_message = ProposalMessage::new(prop);
-
-            let msg = HotFeOxMsg::new(view_seq, HotFeOxMsgType::Proposal(proposal_message));
-
-            let _ = network.broadcast(msg, view_members.into_iter());
-
-            self.consensus_metric.as_leader().register_pre_commit_sent();
-
-            Ok(DecisionResult::DecisionProgressed(
-                Some(created_qc),
-                None,
-                message,
-            ))
-        } else {
-            Ok(DecisionResult::DecisionProgressed(None, None, message))
         }
     }
 
@@ -606,157 +659,68 @@ where
         network: &Arc<NT>,
         dec_handler: &mut DecisionHandler,
         crypto: &Arc<CR>,
-    ) -> DecisionResult<RQ>
-    where
-        NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
-        CR: CryptoInformationProvider,
-        CP: CryptoProvider,
-    {
-        let qc = match message.message().message() {
-            HotFeOxMsgType::Proposal(prop)
-                if message.message().sequence_number() == self.view.sequence_number()
-                    && message.header().from() == self.leader() =>
-            {
-                match prop.proposal_type() {
-                    ProposalType::PreCommit(pre_commit) => pre_commit.clone(),
-                    ProposalType::Prepare(_, _) => {
-                        return DecisionResult::MessageIgnored;
-                    }
-                    ProposalType::Commit(_) | ProposalType::Decide(_) => {
-                        self.decision_queue.queue_message(message);
-
-                        return DecisionResult::MessageQueued;
-                    }
-                }
-            }
-            _ => return DecisionResult::MessageIgnored,
-        };
-
-        self.decision_log
-            .as_mut_replica()
-            .set_prepare_qc(qc.clone());
-
-        dec_handler.install_latest_prepare_qc(qc.clone());
-
-        threadpool::execute({
-            let network = network.clone();
-            let view = self.view.clone();
-            let crypto = crypto.clone();
-            let short_node = qc.decision_node();
-
-            move || {
-                let commit_vote = VoteType::PreCommitVote(short_node);
-
-                let msg_signature = get_partial_signature_for_message::<CR, CP>(
-                    &*crypto,
-                    view.sequence_number(),
-                    &commit_vote,
-                );
-
-                let vote_msg = HotFeOxMsgType::Vote(VoteMessage::new(commit_vote, msg_signature));
-
-                let _ = network.send(
-                    HotFeOxMsg::new(view.sequence_number(), vote_msg),
-                    view.primary(),
-                    true,
-                );
-            }
-        });
-
-        self.consensus_metric
-            .as_replica()
-            .register_pre_commit_proposal();
-        self.current_state = DecisionState::Commit(false, 0);
-
-        DecisionResult::DecisionProgressed(Some(qc), None, message)
-    }
-
-    fn process_message_commit_leader<NT, CR, CP>(
-        &mut self,
-        message: ShareableMessage<HotFeOxMsg<RQ>>,
-        network: &Arc<NT>,
-        crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
         NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
     {
-        let DecisionState::Commit(sent_commit, received) = &mut self.current_state else {
-            unreachable!("Leader decision state is not Commit")
-        };
+        match message.message().message() {
+            HotFeOxMsgType::Proposal(prop)
+                if message.message().sequence_number() == self.view.sequence_number()
+                    && message.header().from() == self.leader() =>
+            {
+                match prop.proposal_type() {
+                    ProposalType::PreCommit(_) => self.process_message_replica::<NT, CR, CP>(
+                        message,
+                        dec_handler,
+                        network,
+                        crypto,
+                    ),
+                    ProposalType::Prepare(_, _) => Ok(DecisionResult::MessageIgnored),
+                    ProposalType::Commit(_) | ProposalType::Decide(_) => {
+                        self.decision_queue.queue_message(message);
 
-        let vote_msg = match message.message().message() {
+                        Ok(DecisionResult::MessageQueued)
+                    }
+                }
+            }
+            _ => Ok(DecisionResult::MessageIgnored),
+        }
+    }
+
+    fn process_message_commit_leader<NT, CR, CP, RQA>(
+        &mut self,
+        message: ShareableMessage<HotFeOxMsg<RQ>>,
+        network: &Arc<NT>,
+        crypto: &Arc<CR>,
+        rqa: &Arc<RQA>,
+    ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
+    where
+        NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
+        CR: CryptoInformationProvider,
+        CP: CryptoProvider,
+        RQA: ReqAggregator<RQ>,
+    {
+        match message.message().message() {
             HotFeOxMsgType::Vote(vote_msg)
                 if message.message().sequence_number() == self.view.sequence_number() =>
             {
                 match vote_msg.vote_type() {
-                    VoteType::PreCommitVote(_) => vote_msg.clone(),
-                    VoteType::PrepareVote(_) => {
-                        return Ok(DecisionResult::MessageIgnored);
-                    }
+                    VoteType::PreCommitVote(_) => self
+                        .process_message_leader::<NT, CR, CP, RQA>(message, network, crypto, rqa),
+                    VoteType::PrepareVote(_) => Ok(DecisionResult::MessageIgnored),
                     _ => {
                         self.decision_queue.queue_message(message);
 
-                        return Ok(DecisionResult::MessageQueued);
+                        Ok(DecisionResult::MessageQueued)
                     }
                 }
             }
             _ => {
                 // Leaders do not receive proposals
-                return Ok(DecisionResult::MessageIgnored);
+                Ok(DecisionResult::MessageIgnored)
             }
-        };
-
-        *received += 1;
-
-        self.consensus_metric.as_leader().register_pre_commit_vote();
-        let leader_log = self
-            .msg_decision_log
-            .as_mut_leader()
-            .expect("Leader decision log not available");
-
-        if !leader_log.accept_vote(message.header().from(), vote_msg)? {
-            return Ok(DecisionResult::DuplicateVote(message.header().from()));
-        }
-
-        if *received >= self.view.quorum() && !*sent_commit {
-            *sent_commit = true;
-            
-            let created_qc =
-                leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::PreCommitVote)?;
-
-            let view_seq = self.view.sequence_number();
-
-            self.decision_log
-                .as_mut_leader()
-                .set_pre_commit_qc(created_qc.clone());
-
-            threadpool::execute({
-                let view_members = self.view.quorum_members().clone();
-                let created_qc = created_qc.clone();
-                let network = network.clone();
-
-                move || {
-                    let prop = ProposalType::Commit(created_qc);
-
-                    let proposal_message = ProposalMessage::new(prop);
-
-                    let msg = HotFeOxMsg::new(view_seq, HotFeOxMsgType::Proposal(proposal_message));
-
-                    let _ = network.broadcast(msg, view_members.into_iter());
-                }
-            });
-
-            self.consensus_metric.as_leader().register_commit_sent();
-
-            Ok(DecisionResult::DecisionProgressed(
-                Some(created_qc),
-                None,
-                message,
-            ))
-        } else {
-            Ok(DecisionResult::DecisionProgressed(None, None, message))
         }
     }
 
@@ -766,146 +730,64 @@ where
         network: &Arc<NT>,
         dec_handler: &mut DecisionHandler,
         crypto: &Arc<CR>,
-    ) -> DecisionResult<RQ>
-    where
-        NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
-        CR: CryptoInformationProvider,
-        CP: CryptoProvider,
-    {
-        let qc = match message.message().message() {
-            HotFeOxMsgType::Proposal(prop)
-                if message.message().sequence_number() == self.view.sequence_number()
-                    && message.header().from() == self.leader() =>
-            {
-                match prop.proposal_type() {
-                    ProposalType::Commit(commit) => commit.clone(),
-                    ProposalType::Decide(_) => {
-                        self.decision_queue.queue_message(message);
-
-                        return DecisionResult::MessageQueued;
-                    },
-                    _ => return DecisionResult::MessageIgnored,
-                }
-            }
-            _ => return DecisionResult::MessageIgnored,
-        };
-
-        self.decision_log.as_mut_replica().set_locked_qc(qc.clone());
-        dec_handler.install_latest_locked_qc(qc.clone());
-
-        threadpool::execute({
-            let network = network.clone();
-            let view = self.view.clone();
-            let crypto = crypto.clone();
-            let short_node = qc.decision_node();
-
-            move || {
-                let commit_vote = VoteType::CommitVote(short_node);
-
-                let msg_signature = get_partial_signature_for_message::<CR, CP>(
-                    &*crypto,
-                    view.sequence_number(),
-                    &commit_vote,
-                );
-
-                let vote_msg = HotFeOxMsgType::Vote(VoteMessage::new(commit_vote, msg_signature));
-
-                let _ = network.send(
-                    HotFeOxMsg::new(view.sequence_number(), vote_msg),
-                    view.primary(),
-                    true,
-                );
-            }
-        });
-
-        self.consensus_metric
-            .as_replica()
-            .register_commit_proposal();
-        self.current_state = DecisionState::Decide(false, 0);
-
-        DecisionResult::DecisionProgressed(Some(qc), None, message)
-    }
-
-    fn process_message_decide_leader<NT, CR, CP>(
-        &mut self,
-        message: ShareableMessage<HotFeOxMsg<RQ>>,
-        network: &Arc<NT>,
-        dec_handler: &mut DecisionHandler,
-        crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
         NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
     {
-        let DecisionState::Decide(sent_decide, received) = &mut self.current_state else {
-            unreachable!("Leader decision state is not Decide")
-        };
-        
-        let vote_msg = match message.message().message() {
+        match message.message().message() {
+            HotFeOxMsgType::Proposal(prop)
+                if message.message().sequence_number() == self.view.sequence_number()
+                    && message.header().from() == self.leader() =>
+            {
+                match prop.proposal_type() {
+                    ProposalType::Commit(_) => self.process_message_replica::<NT, CR, CP>(
+                        message,
+                        dec_handler,
+                        network,
+                        crypto,
+                    ),
+                    ProposalType::Decide(_) => {
+                        self.decision_queue.queue_message(message);
+
+                        Ok(DecisionResult::MessageQueued)
+                    }
+                    _ => Ok(DecisionResult::MessageIgnored),
+                }
+            }
+            _ => Ok(DecisionResult::MessageIgnored),
+        }
+    }
+
+    fn process_message_decide_leader<NT, CR, CP, RQA>(
+        &mut self,
+        message: ShareableMessage<HotFeOxMsg<RQ>>,
+        network: &Arc<NT>,
+        crypto: &Arc<CR>,
+        rqa: &Arc<RQA>,
+    ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
+    where
+        NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
+        CR: CryptoInformationProvider,
+        CP: CryptoProvider,
+        RQA: ReqAggregator<RQ>,
+    {
+        match message.message().message() {
             HotFeOxMsgType::Vote(vote_msg)
                 if message.message().sequence_number() == self.view.sequence_number() =>
             {
                 if let VoteType::CommitVote(_) = vote_msg.vote_type() {
-                    vote_msg.clone()
+                    self.process_message_leader::<NT, CR, CP, RQA>(message, network, crypto, rqa)
                 } else {
                     // This is the last type of message we can receive
-                    return Ok(DecisionResult::MessageIgnored)
+                    Ok(DecisionResult::MessageIgnored)
                 }
             }
             _ => {
                 // Leaders do not receive proposals
-                return Ok(DecisionResult::MessageIgnored);
+                Ok(DecisionResult::MessageIgnored)
             }
-        };
-
-        *received += 1;
-
-        self.consensus_metric.as_leader().register_commit_vote();
-        let leader_log = self
-            .msg_decision_log
-            .as_mut_leader()
-            .expect("Leader decision log not available");
-
-        if !leader_log.accept_vote(message.header().from(), vote_msg)? {
-            return Ok(DecisionResult::DuplicateVote(message.header().from()));
-        }
-
-        if *received >= self.view.quorum() && !*sent_decide {
-            *sent_decide = true;
-            
-            let created_qc =
-                leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, QCType::CommitVote)?;
-
-            let view_seq = self.view.sequence_number();
-
-            self.decision_log
-                .as_mut_leader()
-                .set_commit_qc(created_qc.clone());
-
-            threadpool::execute({
-                let view_members = self.view.quorum_members().clone();
-                let created_qc = created_qc.clone();
-                let network = network.clone();
-
-                move || {
-                    let prop = ProposalType::Decide(created_qc);
-
-                    let proposal_message = ProposalMessage::new(prop);
-
-                    let msg = HotFeOxMsg::new(view_seq, HotFeOxMsgType::Proposal(proposal_message));
-
-                    let _ = network.broadcast(msg, view_members.into_iter());
-                }
-            });
-
-            self.consensus_metric.as_leader().register_decided_sent();
-
-            dec_handler.install_latest_qc(created_qc.clone());
-
-            Ok(DecisionResult::Decided(Some(created_qc), message))
-        } else {
-            Ok(DecisionResult::DecisionProgressed(None, None, message))
         }
     }
 
@@ -913,33 +795,31 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         dec_handler: &mut DecisionHandler,
-    ) -> DecisionResult<RQ>
+        network: &Arc<NT>,
+        crypto: &Arc<CR>,
+    ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
         NT: OrderProtocolSendNode<RQ, HotIronOxSer<RQ>>,
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
     {
-        let qc = match message.message().message() {
+        match message.message().message() {
             HotFeOxMsgType::Proposal(prop)
                 if message.message().sequence_number() == self.view.sequence_number()
                     && message.header().from() == self.leader() =>
             {
                 match prop.proposal_type() {
-                    ProposalType::Decide(decide) => decide.clone(),
-                    _ => return DecisionResult::MessageIgnored,
+                    ProposalType::Decide(_) => self.process_message_replica::<NT, CR, CP>(
+                        message,
+                        dec_handler,
+                        network,
+                        crypto,
+                    ),
+                    _ => Ok(DecisionResult::MessageIgnored),
                 }
             }
-            _ => return DecisionResult::MessageIgnored,
-        };
-
-        self.consensus_metric
-            .as_replica()
-            .register_decided_received();
-        self.current_state = DecisionState::Finally;
-
-        dec_handler.install_latest_qc(qc.clone());
-
-        DecisionResult::Decided(Some(qc), message)
+            _ => Ok(DecisionResult::MessageIgnored),
+        }
     }
 
     pub fn finalize_decision(mut self) -> ProtocolConsensusDecision<RQ>
@@ -948,15 +828,13 @@ where
     {
         let seq = self.sequence_number();
 
-        if self.is_leader() {
-            self.consensus_metric.as_leader().register_decided();
-        } else {
-            self.consensus_metric.as_replica().register_decided();
-        }
+        self.consensus_metric
+            .as_replica()
+            .register_decision_finalized();
 
         let decision_node = self
             .decision_log
-            .into_current_proposal()
+            .into_decision_node()
             .expect("Terminated a decision without an associated decision node");
 
         let (header, client_commands) = decision_node.into();
@@ -1006,4 +884,8 @@ pub enum DecisionError<CS: Error> {
     NewViewGenerateError(#[from] NewViewGenerateError<CS>),
     #[error("Invalid state for processing message")]
     InvalidState,
+    #[error("Failed to get the leader message log when processing vote message")]
+    NoLeaderMessageLog,
+    #[error("Invalid decision node")]
+    InvalidDecisionNode,
 }
