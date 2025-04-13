@@ -1,15 +1,13 @@
 use std::error::Error;
-use anyhow::Chain;
 use thiserror::Error;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use crate::chained::messages::{ChainedQC, IronChainMessageType, VoteMessage};
-use crate::crypto::{combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner};
-use crate::protocol::DecisionNodeHeader;
-use crate::view::View;
-
+use crate::chained::ChainedQC;
+use crate::chained::messages::VoteMessage;
+use crate::crypto::{combine_partial_signatures, CryptoInformationProvider, CryptoSignatureCombiner};
+use crate::decision_tree::DecisionNodeHeader;
 pub enum DecisionLog {
     /// The decision log for the leader
     Leader(NewViewStore),
@@ -54,7 +52,7 @@ impl NewViewStore {
     pub(in super::super) fn get_high_qc(&self) -> Option<&ChainedQC> {
         self.new_view
             .keys()
-            .max_by_key(|qc| qc.as_ref().map(|qc| qc.sequence_number()))
+            .max_by_key(|qc| qc.as_ref().map(Orderable::sequence_number))
             .and_then(Option::as_ref)
     }
 

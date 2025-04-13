@@ -1,7 +1,7 @@
 use crate::crypto::{
     combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner,
 };
-use crate::protocol::{DecisionNode, DecisionNodeHeader, QCType, QC};
+use crate::protocol::{QCType, QC};
 use crate::protocol::messages::{ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType};
 use crate::view::View;
 use atlas_common::collections::HashMap;
@@ -11,6 +11,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use getset::{Getters, MutGetters, Setters};
 use std::error::Error;
 use thiserror::Error;
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 
 /// The log of votes for a given decision instance
 pub enum MsgDecisionLog {

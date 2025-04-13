@@ -1,5 +1,5 @@
-use crate::chained::messages::{ChainedQC, IronChainMessage, IronChainMessageType};
-use crate::protocol::DecisionNodeHeader;
+use crate::chained::messages::IronChainMessage;
+use crate::decision_tree::DecisionNodeHeader;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
@@ -8,6 +8,8 @@ use atlas_core::ordering_protocol::networking::serialize::{
 };
 use std::marker::PhantomData;
 use std::sync::Arc;
+use crate::chained::ChainedQC;
+
 pub struct IronChainSer<RQ>(PhantomData<fn() -> RQ>);
 
 impl<RQ> OrderingProtocolMessage<RQ> for IronChainSer<RQ>

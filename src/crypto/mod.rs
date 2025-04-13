@@ -10,6 +10,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use getset::Getters;
 use std::error::Error;
+use atlas_common::serialization_helper::SerMsg;
 use thiserror::Error;
 
 /// Threshold crypto related information storage
@@ -76,14 +77,15 @@ pub trait CryptoSignatureCombiner: Sync {
         CR: CryptoInformationProvider;
 }
 
-pub fn get_partial_signature_for_message<CR, CP>(
+pub fn get_partial_signature_for_message<CR, CP, VT>(
     crypto_info: &CR,
     view: SeqNo,
-    vote_msg: &VoteType,
+    vote_msg: &VT,
 ) -> PartialSignature
 where
     CR: CryptoInformationProvider,
     CP: CryptoPartialSigProvider,
+    VT: SerMsg
 {
     let bytes = serialize_vote_message(view, vote_msg);
 

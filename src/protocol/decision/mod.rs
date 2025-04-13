@@ -14,8 +14,7 @@ use crate::protocol::log::{
     NewViewGenerateError, VoteAcceptError, VoteStoreError,
 };
 use crate::protocol::msg_queue::HotStuffTBOQueue;
-use crate::protocol::req_aggr::ReqAggregator;
-use crate::protocol::{DecisionHandler, DecisionNode, DecisionNodeHeader, QC};
+use crate::protocol::{HotIronDecisionHandler, QC};
 use crate::view::View;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -33,6 +32,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{error, info, trace, warn};
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
+use crate::req_aggr::ReqAggregator;
 
 #[derive(Debug)]
 pub enum DecisionState {
@@ -121,7 +122,7 @@ where
     pub fn poll<NT, CR, CP>(
         &mut self,
         network: &Arc<NT>,
-        dec_handler: &DecisionHandler,
+        dec_handler: &HotIronDecisionHandler,
         crypto_info: &Arc<CR>,
     ) -> DecisionPollResult<RQ>
     where
@@ -141,7 +142,7 @@ where
                     move || {
                         let vote_type = VoteType::NewView(latest_qc);
 
-                        let partial_sig = get_partial_signature_for_message::<CR, CP>(
+                        let partial_sig = get_partial_signature_for_message::<CR, CP, VoteType>(
                             &*crypto_info,
                             seq,
                             &vote_type,
@@ -218,7 +219,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &mut DecisionHandler,
+        dec_handler: &mut HotIronDecisionHandler,
         crypto: &Arc<CR>,
         req_aggr: &Arc<RQA>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
@@ -426,7 +427,7 @@ where
     fn process_message_replica<NT, CR, CP>(
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
-        dec_handler: &mut DecisionHandler,
+        dec_handler: &mut HotIronDecisionHandler,
         network: &Arc<NT>,
         crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
@@ -522,7 +523,7 @@ where
 
                     let start_time = Instant::now();
 
-                    let msg_signature = get_partial_signature_for_message::<CR, CP>(
+                    let msg_signature = get_partial_signature_for_message::<CR, CP, VoteType>(
                         &*crypto,
                         view.sequence_number(),
                         &vote_type,
@@ -591,7 +592,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &mut DecisionHandler,
+        dec_handler: &mut HotIronDecisionHandler,
         crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
@@ -662,7 +663,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &mut DecisionHandler,
+        dec_handler: &mut HotIronDecisionHandler,
         crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
@@ -733,7 +734,7 @@ where
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
         network: &Arc<NT>,
-        dec_handler: &mut DecisionHandler,
+        dec_handler: &mut HotIronDecisionHandler,
         crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
     where
@@ -799,7 +800,7 @@ where
     fn process_message_decide<NT, CR, CP>(
         &mut self,
         message: ShareableMessage<HotFeOxMsg<RQ>>,
-        dec_handler: &mut DecisionHandler,
+        dec_handler: &mut HotIronDecisionHandler,
         network: &Arc<NT>,
         crypto: &Arc<CR>,
     ) -> Result<DecisionResult<RQ>, DecisionError<CP::CombinationError>>
@@ -862,7 +863,7 @@ where
             seq,
             batch_decision,
             client_rq_infos,
-            header.current_block_digest,
+            header.current_block_digest(),
         )
     }
 }

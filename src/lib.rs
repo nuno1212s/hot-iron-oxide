@@ -1,7 +1,7 @@
 use crate::config::HotIronInitConfig;
 use crate::crypto::{AtlasTHCryptoProvider, CryptoInformationProvider};
 use crate::protocol::hotstuff::HotStuffProtocol;
-use crate::protocol::{DecisionNodeHeader, QC};
+use crate::protocol::QC;
 use protocol::messages::serialize::HotIronOxSer;
 use protocol::messages::HotFeOxMsg;
 use crate::view::View;
@@ -23,6 +23,7 @@ use lazy_static::lazy_static;
 use std::sync::Arc;
 use tracing::trace;
 use atlas_core::timeouts::TimeOutable;
+use decision_tree::DecisionNodeHeader;
 
 pub mod config;
 pub mod crypto;
@@ -31,6 +32,8 @@ mod loggable_protocol;
 pub mod metric;
 pub mod view;
 mod chained;
+mod decision_tree;
+mod req_aggr;
 
 lazy_static! {
     static ref MOD_NAME: Arc<str> = Arc::from("HOT-IRON");

@@ -1,11 +1,12 @@
 pub(super) mod serialize;
 
-use crate::protocol::{DecisionNode, DecisionNodeHeader};
-use atlas_common::crypto::threshold_crypto::{CombinedSignature, PartialSignature};
+use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
 use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use crate::chained::ChainedQC;
+use crate::decision_tree::DecisionNode;
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Hash, Eq, PartialEq, Getters)]
@@ -26,8 +27,8 @@ pub enum IronChainMessageType<D> {
 #[derive(Clone, Hash, Eq, PartialEq, Getters)]
 #[get = "pub"]
 pub struct VoteMessage {
-    vote: Option<ChainedQC>,
-    signature: PartialSignature,
+    pub vote: Option<ChainedQC>,
+    pub signature: PartialSignature,
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
@@ -38,16 +39,22 @@ pub struct ProposalMessage<D> {
     qc: ChainedQC,
 }
 
-/// In chained hotstuff, there is only one QC type,
-/// generic which will be used for all the steps of the protocol
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Hash, Eq, PartialEq, Getters)]
-#[get = "pub"]
-pub struct ChainedQC {
-    /// The sequence number of the QC
-    seq_no: SeqNo,
-    decision_node: DecisionNodeHeader,
-    signature: CombinedSignature,
+impl<D> IronChainMessage<D> {
+    pub fn new(seq_no: SeqNo, message: IronChainMessageType<D>) -> Self {
+        Self { seq_no, message }
+    }
+}
+
+impl VoteMessage {
+    pub fn new(vote: Option<ChainedQC>, signature: PartialSignature) -> Self {
+        Self { vote, signature }
+    }
+}
+
+impl<D> ProposalMessage<D> {
+    pub fn new(proposal: DecisionNode<D>, qc: ChainedQC) -> Self {
+        Self { proposal, qc }
+    }
 }
 
 impl<RQ> Orderable for IronChainMessage<RQ> {
@@ -56,24 +63,3 @@ impl<RQ> Orderable for IronChainMessage<RQ> {
     }
 }
 
-impl ChainedQC {
-    
-    pub fn new(
-        seq_no: SeqNo,
-        decision_node: DecisionNodeHeader,
-        signature: CombinedSignature,
-    ) -> Self {
-        ChainedQC {
-            seq_no,
-            decision_node,
-            signature,
-        }
-    }
-    
-}
-
-impl Orderable for ChainedQC {
-    fn sequence_number(&self) -> SeqNo {
-        self.seq_no
-    }
-}

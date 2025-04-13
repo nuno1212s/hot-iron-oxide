@@ -5,8 +5,7 @@ mod decision_test {
     };
     use crate::protocol::decision::{DecisionResult, DecisionState, HSDecision};
     use crate::protocol::log::MsgLeaderDecisionLog;
-    use crate::protocol::req_aggr::ReqAggregator;
-    use crate::protocol::{DecisionHandler, DecisionNode, QC};
+    use crate::protocol::{HotIronDecisionHandler, QC};
     use crate::protocol::messages::serialize::HotIronOxSer;
     use crate::protocol::messages::{
         HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
@@ -36,9 +35,10 @@ mod decision_test {
     use atlas_core::ordering_protocol::networking::serialize::NetworkView;
     use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
     use serde::{Deserialize, Serialize};
-    use std::cell::RefCell;
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
+    use crate::decision_tree::{DecisionHandler, DecisionNode};
+    use crate::req_aggr::ReqAggregator;
 
     #[derive(Clone, Serialize, Deserialize)]
     struct BlankProtocol;
@@ -416,7 +416,7 @@ mod decision_test {
         vote: VoteType,
     ) -> HotFeOxMsg<RQ> {
         let msg_signature =
-            get_partial_signature_for_message::<_, AtlasTHCryptoProvider>(crypto, seq_no, &vote);
+            get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(crypto, seq_no, &vote);
 
         HotFeOxMsg::new(
             seq_no,
@@ -439,7 +439,7 @@ mod decision_test {
         target: NodeId,
         from: &[NodeId],
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &mut DecisionHandler,
+        decision_handler: &mut HotIronDecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>>
     where
         F: Fn(NodeId) -> HotFeOxMsg<BlankProtocol>,
@@ -481,7 +481,7 @@ mod decision_test {
     fn process_pending_node_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &mut DecisionHandler,
+        decision_handler: &mut HotIronDecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let mut results = Vec::new();
         
@@ -566,7 +566,7 @@ mod decision_test {
     fn new_view_decision_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &mut DecisionHandler,
+        decision_handler: &mut HotIronDecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
@@ -661,7 +661,7 @@ mod decision_test {
     fn prepare_decision_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &mut DecisionHandler,
+        decision_handler: &mut HotIronDecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
@@ -765,7 +765,7 @@ mod decision_test {
     fn commit_decision_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &mut DecisionHandler,
+        decision_handler: &mut HotIronDecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
@@ -873,7 +873,7 @@ mod decision_test {
     fn decide_decision_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &mut DecisionHandler,
+        decision_handler: &mut HotIronDecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
 
@@ -985,7 +985,7 @@ mod decision_test {
     fn prepare_proposal_messages(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &mut DecisionHandler,
+        decision_handler: &mut HotIronDecisionHandler,
         decision_log: &mut MsgLeaderDecisionLog,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();
@@ -1033,7 +1033,7 @@ mod decision_test {
 
             let vote = VoteType::NewView(None);
 
-            let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider>(
+            let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(
                 &**crypto, sequence, &vote,
             );
 
@@ -1121,7 +1121,7 @@ mod decision_test {
 
                 let vote = VoteType::PrepareVote(*decision.decision_header());
 
-                let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider>(
+                let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(
                     &**crypto, sequence, &vote,
                 );
 
@@ -1144,7 +1144,7 @@ mod decision_test {
     fn pre_commit_proposal_messages<RQ>(
         scenario: &mut Scenario,
         cryptos_for: &HashMap<NodeId, Arc<CryptoInfoMock>>,
-        decision_handler: &mut DecisionHandler,
+        decision_handler: &mut HotIronDecisionHandler,
         decision_log: &mut MsgLeaderDecisionLog,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let leader = scenario.decision.view().primary();

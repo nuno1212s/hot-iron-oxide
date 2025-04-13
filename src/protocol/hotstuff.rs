@@ -1,9 +1,9 @@
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
+use crate::decision_tree::{DecisionHandler, DecisionNodeHeader};
 use crate::protocol::decision::{DecisionError, DecisionFinalizationResult, DecisionPollResult, DecisionResult, HSDecision};
-use crate::protocol::req_aggr::RequestAggr;
-use crate::protocol::{DecisionHandler, DecisionNodeHeader, QC};
 use crate::protocol::messages::serialize::HotIronOxSer;
 use crate::protocol::messages::HotFeOxMsg;
+use crate::protocol::QC;
 use crate::view::View;
 use crate::{HotIronDecision, HotIronPollResult, HotIronResult};
 use atlas_common::maybe_vec::MaybeVec;
@@ -24,6 +24,7 @@ use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, instrument, warn};
+use crate::req_aggr::RequestAggr;
 
 /// A data structure to keep track of any consensus instances that have been signalled
 ///
@@ -45,7 +46,7 @@ where
     /// The decision store
     decisions: VecDeque<HSDecision<RQ>>,
 
-    decision_handler: DecisionHandler,
+    decision_handler: DecisionHandler<QC>,
 
     request_aggr: Arc<RequestAggr<RQ>>,
 

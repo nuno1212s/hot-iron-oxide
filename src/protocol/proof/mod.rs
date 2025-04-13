@@ -1,4 +1,4 @@
-use crate::protocol::{DecisionNode, DecisionNodeHeader, QCType, QC};
+use crate::protocol::{QCType, QC};
 use crate::protocol::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType};
 use atlas_common::collections::HashMap;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -8,7 +8,7 @@ use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::info;
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Getters)]

@@ -1,6 +1,6 @@
-use crate::protocol::{DecisionNodeHeader, QC};
-use crate::protocol::messages::{HotFeOxMsg, HotFeOxMsgType, VoteType};
-use atlas_common::ordering::{Orderable, SeqNo};
+use crate::protocol::QC;
+use crate::protocol::messages::{HotFeOxMsg, VoteType};
+use atlas_common::ordering::SeqNo;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::{Buf, Header};
 use atlas_communication::reconfiguration::NetworkInformationProvider;
@@ -10,6 +10,7 @@ use atlas_core::ordering_protocol::networking::serialize::{
 use serde::Serialize;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use crate::decision_tree::DecisionNodeHeader;
 
 pub struct HotIronOxSer<RQ>(PhantomData<fn() -> RQ>);
 
@@ -37,12 +38,12 @@ where
 }
 
 #[derive(Serialize)]
-struct VoteMessage<'a> {
+struct VoteMessage<'a, VT> {
     view_seq: SeqNo,
-    vote_type: &'a VoteType,
+    vote_type: &'a VT,
 }
 
-pub fn serialize_vote_message(view_seq: SeqNo, vote_type: &VoteType) -> Buf {
+pub fn serialize_vote_message<VT>(view_seq: SeqNo, vote_type: &VT) -> Buf where VT: SerMsg {
     let vote_msg = VoteMessage {
         view_seq,
         vote_type,
