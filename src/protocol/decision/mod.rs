@@ -1,20 +1,21 @@
-mod chained;
 mod test;
 
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
-use crate::decisions::log::{
-    DecisionLog, MsgDecisionLog, MsgLeaderDecisionLog, MsgReplicaDecisionLog, NewViewAcceptError,
-    NewViewGenerateError, VoteAcceptError, VoteStoreError,
-};
-use crate::decisions::msg_queue::HotStuffTBOQueue;
-use crate::decisions::req_aggr::ReqAggregator;
-use crate::decisions::{DecisionHandler, DecisionNode, DecisionNodeHeader, QC};
-use crate::messages::serialize::HotIronOxSer;
-use crate::messages::{
+use crate::protocol::messages::serialize::HotIronOxSer;
+use crate::protocol::messages::{
     HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
     VoteType, VoteTypes,
 };
-use crate::metric::ConsensusDecisionMetric;
+use crate::metric::{
+    ConsensusDecisionMetric, SIGNATURE_PROPOSAL_LATENCY_ID, SIGNATURE_VOTE_LATENCY_ID,
+};
+use crate::protocol::log::{
+    DecisionLog, MsgDecisionLog, MsgLeaderDecisionLog, MsgReplicaDecisionLog, NewViewAcceptError,
+    NewViewGenerateError, VoteAcceptError, VoteStoreError,
+};
+use crate::protocol::msg_queue::HotStuffTBOQueue;
+use crate::protocol::req_aggr::ReqAggregator;
+use crate::protocol::{DecisionHandler, DecisionNode, DecisionNodeHeader, QC};
 use crate::view::View;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -24,12 +25,14 @@ use atlas_core::messages::{ClientRqInfo, SessionBased};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{BatchedDecision, ProtocolConsensusDecision, ShareableMessage};
+use atlas_metrics::metrics::metric_duration;
 use derive_more::with_trait::Display;
 use getset::{Getters, Setters};
 use std::error::Error;
 use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
-use tracing::{error, info, warn};
+use tracing::{error, info, trace, warn};
 
 #[derive(Debug)]
 pub enum DecisionState {
@@ -167,41 +170,17 @@ where
 
                 DecisionPollResult::Recv
             }
-            DecisionState::Prepare(_, _) if self.decision_queue.should_poll() => {
-                let decision_queue = self.decision_queue.prepare.pop_front();
-
-                if let Some(message) = decision_queue {
-                    DecisionPollResult::NextMessage(message)
-                } else {
-                    DecisionPollResult::Recv
-                }
-            }
-            DecisionState::PreCommit(_, _) if self.decision_queue.should_poll() => {
-                let decision_queue = self.decision_queue.pre_commit.pop_front();
-
-                if let Some(message) = decision_queue {
-                    DecisionPollResult::NextMessage(message)
-                } else {
-                    DecisionPollResult::Recv
-                }
-            }
-            DecisionState::Commit(_, _) if self.decision_queue.should_poll() => {
-                let decision_queue = self.decision_queue.commit.pop_front();
-
-                if let Some(message) = decision_queue {
-                    DecisionPollResult::NextMessage(message)
-                } else {
-                    DecisionPollResult::Recv
-                }
-            }
-            DecisionState::Decide(_, _) if self.decision_queue.should_poll() => {
-                let decision_queue = self.decision_queue.decide.pop_front();
-
-                if let Some(message) = decision_queue {
-                    DecisionPollResult::NextMessage(message)
-                } else {
-                    DecisionPollResult::Recv
-                }
+            DecisionState::Prepare(_, _)
+            | DecisionState::PreCommit(_, _)
+            | DecisionState::Commit(_, _)
+            | DecisionState::Decide(_, _)
+                if self.decision_queue.should_poll() =>
+            {
+                self.decision_queue
+                    .get_message_for(self.is_leader(), &self.current_state)
+                    .map_or(DecisionPollResult::Recv, |message| {
+                        DecisionPollResult::NextMessage(message)
+                    })
             }
             DecisionState::Finally => DecisionPollResult::Decided,
             _ => DecisionPollResult::Recv,
@@ -251,19 +230,29 @@ where
     {
         let is_leader = self.is_leader();
 
-        info!(
+        trace!(
             decision = &(u32::from(self.sequence_number())),
-            "Processing message {:?} with current state {:?}", message, self.current_state
+            "Processing message {:?} with current state {:?}",
+            message,
+            self.current_state
         );
 
+        if self.view.sequence_number() != message.sequence_number() {
+            error!(
+                decision = &(u32::from(self.sequence_number())),
+                "Message sequence number {:?} does not match current view sequence number {:?}",
+                message.sequence_number(),
+                self.view.sequence_number()
+            );
+
+            return Ok(DecisionResult::MessageIgnored);
+        }
+
         match &mut self.current_state {
-            DecisionState::Init if self.view.sequence_number() == message.sequence_number() => {
+            DecisionState::Init => {
                 self.decision_queue.queue_message(message);
 
                 Ok(DecisionResult::MessageQueued)
-            }
-            DecisionState::Init | DecisionState::Finally | DecisionState::NextView => {
-                Ok(DecisionResult::MessageIgnored)
             }
             DecisionState::Prepare(_, _) if is_leader => match message.message().message() {
                 HotFeOxMsgType::Proposal(_) => self.process_message_prepare::<NT, CR, CP>(
@@ -316,6 +305,7 @@ where
             DecisionState::Decide(_, _) => {
                 self.process_message_decide::<NT, CR, CP>(message, dec_handler, network, crypto)
             }
+            DecisionState::Finally | DecisionState::NextView => Ok(DecisionResult::MessageIgnored),
         }
     }
 
@@ -370,13 +360,19 @@ where
                 let node = if let Some(qc) = high_qc {
                     DecisionNode::create_leaf(&qc.decision_node(), digest, pooled_request)
                 } else {
-                    DecisionNode::create_root_leaf(&self.view, digest, pooled_request)
+                    DecisionNode::create_root(&self.view, digest, pooled_request)
                 };
+
+                let start_signature_time = Instant::now();
 
                 let new_qc = leader_log
                     .new_view_store()
                     .create_new_qc::<_, CP>(&**crypto, node.decision_header())?;
 
+                metric_duration(
+                    SIGNATURE_PROPOSAL_LATENCY_ID,
+                    start_signature_time.elapsed(),
+                );
                 self.consensus_metric
                     .as_leader()
                     .register_proposal_sent(ProposalTypes::Decide);
@@ -390,9 +386,14 @@ where
                     VoteType::NewView(_) => unreachable!(),
                 };
 
-                let qc =
-                    leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, proposal_type)?;
+                let start_signature_time = Instant::now();
 
+                let qc = leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, proposal_type)?;
+
+                metric_duration(
+                    SIGNATURE_PROPOSAL_LATENCY_ID,
+                    start_signature_time.elapsed(),
+                );
                 self.consensus_metric
                     .as_leader()
                     .register_proposal_sent(proposal_type);
@@ -519,11 +520,15 @@ where
                 move || {
                     // Send the message signing processing to the threadpool
 
+                    let start_time = Instant::now();
+
                     let msg_signature = get_partial_signature_for_message::<CR, CP>(
                         &*crypto,
                         view.sequence_number(),
                         &vote_type,
                     );
+
+                    metric_duration(SIGNATURE_VOTE_LATENCY_ID, start_time.elapsed());
 
                     let vote_msg = HotFeOxMsgType::Vote(VoteMessage::new(vote_type, msg_signature));
 

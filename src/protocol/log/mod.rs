@@ -1,8 +1,8 @@
 use crate::crypto::{
     combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner,
 };
-use crate::decisions::{DecisionNode, DecisionNodeHeader, QCType, QC};
-use crate::messages::{ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType};
+use crate::protocol::{DecisionNode, DecisionNodeHeader, QCType, QC};
+use crate::protocol::messages::{ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType};
 use crate::view::View;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::threshold_crypto::PartialSignature;

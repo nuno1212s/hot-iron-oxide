@@ -1,5 +1,5 @@
-use crate::decisions::{DecisionNode, DecisionNodeHeader, QCType, QC};
-use crate::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType};
+use crate::protocol::{DecisionNode, DecisionNodeHeader, QCType, QC};
+use crate::protocol::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType};
 use atlas_common::collections::HashMap;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;

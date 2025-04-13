@@ -1,4 +1,4 @@
-use crate::messages::{ProposalType, ProposalTypes, VoteType, VoteTypes};
+use crate::protocol::messages::{ProposalType, ProposalTypes, VoteType, VoteTypes};
 use atlas_metrics::metrics::{metric_duration, MetricKind};
 use atlas_metrics::{MetricLevel, MetricRegistry};
 use enum_map::EnumMap;
@@ -19,6 +19,15 @@ pub(crate) const COMMIT_LATENCY_ID: usize = 103;
 
 pub(crate) const DECIDED_LATENCY: &str = "DECIDED_LATENCY";
 pub(crate) const DECIDED_LATENCY_ID: usize = 104;
+
+pub(crate) const FINALIZED_LATENCY: &str = "FINALIZED_LATENCY";
+pub(crate) const FINALIZED_LATENCY_ID: usize = 105;
+
+pub(crate) const SIGNATURE_PROPOSAL_LATENCY: &str = "SIGNATURE_PROPOSAL_LATENCY";
+pub(crate) const SIGNATURE_PROPOSAL_LATENCY_ID: usize = 106;
+
+pub(crate) const SIGNATURE_VOTE_LATENCY: &str = "SIGNATURE_VOTE_LATENCY";
+pub(crate) const SIGNATURE_VOTE_LATENCY_ID: usize = 107;
 
 #[must_use]
 pub fn metrics() -> Vec<MetricRegistry> {
@@ -63,6 +72,29 @@ pub fn metrics() -> Vec<MetricRegistry> {
             1,
         )
             .into(),
+        (
+            FINALIZED_LATENCY_ID,
+            FINALIZED_LATENCY.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Info,
+            1,
+        )
+            .into(),
+        (
+            SIGNATURE_PROPOSAL_LATENCY_ID,
+            SIGNATURE_PROPOSAL_LATENCY.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Info,
+            1,
+        )
+            .into(),
+        (
+            SIGNATURE_VOTE_LATENCY_ID,
+            SIGNATURE_VOTE_LATENCY.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Info,
+        )
+            .into(),
     ]
 }
 
@@ -74,21 +106,13 @@ pub(crate) enum ConsensusDecisionMetric {
     Replica(ReplicaConsensusDecisionMetric),
 }
 
-macro_rules! update_instant {
-    ($self:ident, $field:ident, $instant: expr) => {
-        if $self.$field.is_none() {
-            $self.$field = Some($instant);
-        }
-    };
-}
-
-#[derive(Getters)]
+#[derive(Getters, Default)]
 pub(crate) struct LeaderConsensusDecisionMetric {
     received_votes: EnumMap<VoteTypes, Option<Instant>>,
     sent_proposals: EnumMap<ProposalTypes, Option<Instant>>,
 }
 
-#[derive(Getters)]
+#[derive(Getters, Default)]
 pub(crate) struct ReplicaConsensusDecisionMetric {
     received_proposals: EnumMap<ProposalTypes, Option<Instant>>,
     sent_votes: EnumMap<VoteTypes, Option<Instant>>,
@@ -190,14 +214,14 @@ impl ReplicaConsensusDecisionMetric {
             ProposalTypes::PreCommit => {
                 metric_duration(
                     PRE_COMMIT_LATENCY_ID,
-                    self.sent_votes[VoteTypes::PreCommitVote]
+                    self.sent_votes[VoteTypes::PrepareVote]
                         .as_ref()
                         .map_or_else(Duration::default, Instant::elapsed),
                 );
             }
             ProposalTypes::Commit => {
                 metric_duration(
-                    PRE_COMMIT_LATENCY_ID,
+                    COMMIT_LATENCY_ID,
                     self.sent_votes[VoteTypes::PreCommitVote]
                         .as_ref()
                         .map_or_else(Duration::default, Instant::elapsed),
@@ -205,7 +229,7 @@ impl ReplicaConsensusDecisionMetric {
             }
             ProposalTypes::Decide => {
                 metric_duration(
-                    COMMIT_LATENCY_ID,
+                    DECIDED_LATENCY_ID,
                     self.sent_votes[VoteTypes::CommitVote]
                         .as_ref()
                         .map_or_else(Duration::default, Instant::elapsed),
@@ -213,34 +237,15 @@ impl ReplicaConsensusDecisionMetric {
             }
         }
     }
-    
+
     pub(crate) fn register_decision_finalized(&mut self) {
         self.finalized_proposal = Some(Instant::now());
-        
+
         metric_duration(
-            DECIDED_LATENCY_ID,
+            FINALIZED_LATENCY_ID,
             self.received_proposals[ProposalTypes::Commit]
                 .as_ref()
                 .map_or_else(Duration::default, Instant::elapsed),
         );
-    }
-}
-
-impl Default for ReplicaConsensusDecisionMetric {
-    fn default() -> Self {
-        Self {
-            received_proposals: EnumMap::default(),
-            sent_votes: EnumMap::default(),
-            finalized_proposal: None,
-        }
-    }
-}
-
-impl Default for LeaderConsensusDecisionMetric {
-    fn default() -> Self {
-        Self {
-            received_votes: EnumMap::default(),
-            sent_proposals: EnumMap::default(),
-        }
     }
 }

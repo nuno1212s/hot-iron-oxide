@@ -1,7 +1,7 @@
 use crate::crypto::CryptoInformationProvider;
-use crate::decisions::proof::Proof;
-use crate::messages::serialize::HotIronOxSer;
-use crate::messages::{HotFeOxMsgType, ProposalType, VoteType};
+use crate::protocol::proof::Proof;
+use crate::protocol::messages::serialize::HotIronOxSer;
+use crate::protocol::messages::{HotFeOxMsgType, ProposalType, VoteType};
 use crate::HotIron;
 use crate::SerMsg;
 use atlas_common::ordering::Orderable;

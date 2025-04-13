@@ -1,5 +1,5 @@
-use crate::decisions::{DecisionNodeHeader, QC};
-use crate::messages::{HotFeOxMsg, HotFeOxMsgType, VoteType};
+use crate::protocol::{DecisionNodeHeader, QC};
+use crate::protocol::messages::{HotFeOxMsg, HotFeOxMsgType, VoteType};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::{Buf, Header};
@@ -31,10 +31,8 @@ where
         OPVH: OrderProtocolVerificationHelper<RQ, Self, NI>,
         Self: Sized,
     {
-        match message.message() {
-            HotFeOxMsgType::Proposal(_) => Ok(()), //TODO
-            HotFeOxMsgType::Vote(_) => Ok(()),
-        }
+        //TODO: Verify message correctness
+        Ok(())
     }
 }
 

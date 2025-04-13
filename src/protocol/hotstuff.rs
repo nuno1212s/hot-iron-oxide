@@ -1,9 +1,9 @@
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
-use crate::decisions::decision::{DecisionError, DecisionFinalizationResult, DecisionPollResult, DecisionResult, HSDecision};
-use crate::decisions::req_aggr::RequestAggr;
-use crate::decisions::{DecisionHandler, DecisionNodeHeader, QC};
-use crate::messages::serialize::HotIronOxSer;
-use crate::messages::HotFeOxMsg;
+use crate::protocol::decision::{DecisionError, DecisionFinalizationResult, DecisionPollResult, DecisionResult, HSDecision};
+use crate::protocol::req_aggr::RequestAggr;
+use crate::protocol::{DecisionHandler, DecisionNodeHeader, QC};
+use crate::protocol::messages::serialize::HotIronOxSer;
+use crate::protocol::messages::HotFeOxMsg;
 use crate::view::View;
 use crate::{HotIronDecision, HotIronPollResult, HotIronResult};
 use atlas_common::maybe_vec::MaybeVec;

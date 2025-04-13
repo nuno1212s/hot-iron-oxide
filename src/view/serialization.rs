@@ -1,4 +1,4 @@
-use crate::messages::serialize::HotIronOxSer;
+use crate::protocol::messages::serialize::HotIronOxSer;
 use crate::view::View;
 use atlas_core::ordering_protocol::networking::serialize::PermissionedOrderingProtocolMessage;
 

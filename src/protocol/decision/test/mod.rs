@@ -3,12 +3,12 @@ mod decision_test {
     use crate::crypto::{
         get_partial_signature_for_message, AtlasTHCryptoProvider, CryptoInformationProvider,
     };
-    use crate::decisions::decision::{DecisionResult, DecisionState, HSDecision};
-    use crate::decisions::log::MsgLeaderDecisionLog;
-    use crate::decisions::req_aggr::ReqAggregator;
-    use crate::decisions::{DecisionHandler, DecisionNode, QC};
-    use crate::messages::serialize::HotIronOxSer;
-    use crate::messages::{
+    use crate::protocol::decision::{DecisionResult, DecisionState, HSDecision};
+    use crate::protocol::log::MsgLeaderDecisionLog;
+    use crate::protocol::req_aggr::ReqAggregator;
+    use crate::protocol::{DecisionHandler, DecisionNode, QC};
+    use crate::protocol::messages::serialize::HotIronOxSer;
+    use crate::protocol::messages::{
         HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
         VoteType,
     };
@@ -1022,7 +1022,7 @@ mod decision_test {
     ) -> (DecisionNode<BlankProtocol>, QC) {
         let (rqs, digest) = scenario.rq_aggr.take_pool_requests();
 
-        let decision = DecisionNode::create_root_leaf(scenario.decision.view(), digest, rqs);
+        let decision = DecisionNode::create_root(scenario.decision.view(), digest, rqs);
 
         let sequence = scenario.decision.sequence_number();
 

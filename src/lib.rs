@@ -1,9 +1,9 @@
 use crate::config::HotIronInitConfig;
 use crate::crypto::{AtlasTHCryptoProvider, CryptoInformationProvider};
-use crate::decisions::hotstuff::HotStuffProtocol;
-use crate::decisions::{DecisionNodeHeader, QC};
-use crate::messages::serialize::HotIronOxSer;
-use crate::messages::HotFeOxMsg;
+use crate::protocol::hotstuff::HotStuffProtocol;
+use crate::protocol::{DecisionNodeHeader, QC};
+use protocol::messages::serialize::HotIronOxSer;
+use protocol::messages::HotFeOxMsg;
 use crate::view::View;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
@@ -26,9 +26,8 @@ use atlas_core::timeouts::TimeOutable;
 
 pub mod config;
 pub mod crypto;
-pub mod decisions;
+pub mod protocol;
 mod loggable_protocol;
-pub mod messages;
 pub mod metric;
 pub mod view;
 mod chained;

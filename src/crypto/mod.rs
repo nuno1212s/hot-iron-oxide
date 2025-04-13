@@ -1,7 +1,7 @@
 mod test;
 
-use crate::messages::serialize::serialize_vote_message;
-use crate::messages::VoteType;
+use crate::protocol::messages::serialize::serialize_vote_message;
+use crate::protocol::messages::VoteType;
 use atlas_common::crypto::threshold_crypto::{
     CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PrivateKeySet,
     PublicKeyPart, PublicKeySet, VerifySignatureError,

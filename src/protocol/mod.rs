@@ -16,6 +16,7 @@ mod log;
 mod msg_queue;
 pub mod proof;
 pub(crate) mod req_aggr;
+pub mod messages;
 
 /// The decision node header
 
@@ -136,7 +137,7 @@ impl<D> DecisionNode<D> {
     }
 
     #[must_use]
-    pub fn create_root_leaf(
+    pub fn create_root(
         view: &View,
         digest: Digest,
         client_commands: Vec<StoredMessage<D>>,
