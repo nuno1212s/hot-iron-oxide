@@ -96,9 +96,9 @@ where
 {
     pub fn new(view: View, node_id: NodeId) -> Self {
         let msg_decision_log = if view.primary() == node_id {
-            MsgDecisionLog::Leader(MsgLeaderDecisionLog::default())
+            MsgDecisionLog::Leader(Box::default())
         } else {
-            MsgDecisionLog::Replica(MsgReplicaDecisionLog::default())
+            MsgDecisionLog::Replica(Box::default())
         };
 
         let consensus_metric = if view.primary() == node_id {

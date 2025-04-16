@@ -15,8 +15,8 @@ use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 
 /// The log of votes for a given decision instance
 pub enum MsgDecisionLog {
-    Leader(MsgLeaderDecisionLog),
-    Replica(MsgReplicaDecisionLog),
+    Leader(Box<MsgLeaderDecisionLog>),
+    Replica(Box<MsgReplicaDecisionLog>),
 }
 
 #[derive(Setters, Getters, MutGetters)]

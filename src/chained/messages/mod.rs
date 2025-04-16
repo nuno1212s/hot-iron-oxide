@@ -35,8 +35,8 @@ pub struct VoteMessage {
 #[derive(Clone, Hash, Eq, PartialEq, Getters)]
 #[get = "pub"]
 pub struct ProposalMessage<D> {
-    proposal: DecisionNode<D>,
-    qc: ChainedQC,
+    pub(in super) proposal: DecisionNode<D>,
+    pub(in super) qc: ChainedQC,
 }
 
 impl<D> IronChainMessage<D> {

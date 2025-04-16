@@ -1,7 +1,7 @@
 use crate::chained::messages::serialize::IronChainSer;
 use crate::chained::protocol::ChainedHotStuffProtocol;
 use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertificate};
-use crate::req_aggr::{ReqAggregator, RequestAggr};
+use crate::req_aggr::ReqAggregator;
 use crate::view::View;
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
 use atlas_common::node_id::NodeId;
@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 mod messages;
 mod protocol;
+mod chained_decision_tree;
 
 type IronChainResult<RQ> = OPExecResult<
     DecisionMetadata<RQ, IronChainSer<RQ>>,
@@ -79,11 +80,11 @@ where
 /// generic which will be used for all the steps of the protocol
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Hash, Eq, PartialEq, Getters)]
-#[get = "pub"]
 pub struct ChainedQC {
     /// The sequence number of the QC
     seq_no: SeqNo,
     decision_node: DecisionNodeHeader,
+    #[get = "pub"]
     signature: CombinedSignature,
 }
 

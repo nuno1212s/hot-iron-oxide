@@ -4,7 +4,7 @@ use crate::chained::protocol::log::{DecisionLog, NewViewGenerateError, NewViewSt
 use crate::chained::protocol::msg_queue::ChainedHotStuffMsgQueue;
 use crate::chained::{ChainedDecisionHandler, ChainedQC, IronChainPollResult};
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader, TQuorumCertificate};
 use crate::metric::SIGNATURE_VOTE_LATENCY_ID;
 use crate::view::View;
 use atlas_common::node_id::NodeId;
@@ -34,7 +34,7 @@ pub(super) enum ChainedDecisionResult<D> {
         ChainedQC,
         ShareableMessage<IronChainMessage<D>>,
     ),
-    VoteGenerated(ChainedQC, ShareableMessage<IronChainMessage<D>>),
+    VoteGenerated(Option<DecisionNode<D>> ,ChainedQC, ShareableMessage<IronChainMessage<D>>),
     MessageIgnored,
     MessageProcessed(ShareableMessage<IronChainMessage<D>>),
 }
@@ -149,8 +149,8 @@ where
         &mut self,
         decision_handler: &mut ChainedDecisionHandler,
         crypto: &Arc<CR>,
-        message: ShareableMessage<IronChainMessage<RQ>>,
         network: &Arc<NT>,
+        message: ShareableMessage<IronChainMessage<RQ>>,
     ) -> ChainedDecisionResult<RQ>
     where
         CR: CryptoInformationProvider,
@@ -170,7 +170,12 @@ where
             return ChainedDecisionResult::MessageIgnored;
         }
         
-        decision_handler.install_latest_prepare_qc(proposal_message.qc().clone());
+        let ProposalMessage {
+            proposal,
+            qc,
+        } = proposal_message;
+        
+        decision_handler.install_latest_prepare_qc(qc.clone());
 
         self.state = ChainedDecisionState::PreCommit;
 
@@ -181,7 +186,7 @@ where
 
             let view = self.view.clone();
             
-            let qc = proposal_message.qc().clone();
+            let qc = qc.clone();
 
             move || {
                 // Send the message signing processing to the thread pool
@@ -206,7 +211,7 @@ where
             }
         });
         
-        ChainedDecisionResult::VoteGenerated(proposal_message.qc().clone(), message)
+        ChainedDecisionResult::VoteGenerated(Some(proposal), qc, message)
     }
 }
 
