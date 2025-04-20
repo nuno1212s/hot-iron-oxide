@@ -30,54 +30,6 @@ pub struct DecisionNodeHeader {
     contained_client_commands: usize,
 }
 
-/// The decision nod
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Getters)]
-pub struct DecisionNode<D> {
-    #[getset(get = "pub")]
-    decision_header: DecisionNodeHeader,
-    #[getset(get = "pub")]
-    client_commands: Vec<StoredMessage<D>>,
-}
-
-#[derive(Getters)]
-pub struct DecisionHandler<QC> {
-    latest_qc: Option<QC>,
-    #[getset(get = "pub")]
-    latest_prepare_qc: Option<QC>,
-    #[getset(get = "pub")]
-    latest_locked_qc: Option<QC>
-}
-
-impl<QC> DecisionHandler<QC> where QC: TQuorumCertificate {
-    pub fn safe_node<D>(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
-        match (node.decision_header.previous_block, self.latest_qc()) {
-            (Some(prev), Some(latest_qc)) => {
-                prev == latest_qc.decision_node().current_block_digest
-                    && qc.sequence_number() > latest_qc.sequence_number()
-            }
-            (None, None) => true,
-            _ => false,
-        }
-    }
-
-    pub(crate) fn latest_qc(&self) -> Option<QC> {
-        self.latest_qc.clone()
-    }
-
-    fn install_latest_qc(&mut self, qc: QC) {
-        self.latest_qc = Some(qc);
-    }
-    
-    pub(crate) fn install_latest_prepare_qc(&mut self, qc: QC) {
-        self.latest_prepare_qc = Some(qc);
-    }
-    
-    fn install_latest_locked_qc(&mut self, qc: QC) {
-        self.latest_locked_qc = Some(qc);
-    }
-}
-
 impl Orderable for DecisionNodeHeader {
     fn sequence_number(&self) -> SeqNo {
         self.view_no
@@ -106,6 +58,20 @@ impl DecisionNodeHeader {
             contained_client_commands: contained_commands,
         }
     }
+
+    fn new(view_no: SeqNo, previous_block: Option<Digest>, current_block_digest: Digest, contained_client_commands: usize) -> Self {
+        Self { view_no, previous_block, current_block_digest, contained_client_commands }
+    }
+}
+
+/// The decision nod
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Getters)]
+pub struct DecisionNode<D> {
+    #[getset(get = "pub")]
+    decision_header: DecisionNodeHeader,
+    #[getset(get = "pub")]
+    client_commands: Vec<StoredMessage<D>>,
 }
 
 impl<D> Orderable for DecisionNode<D> {
@@ -125,6 +91,23 @@ impl<D> DecisionNode<D> {
             decision_header: DecisionNodeHeader::initialize_header_from_previous(
                 digest,
                 previous_node,
+                client_commands.len(),
+            ),
+            client_commands,
+        }
+    }
+
+    #[must_use]
+    pub fn create_blank_branch_node(
+        seq_no: SeqNo,
+        digest: Digest,
+        client_commands: Vec<StoredMessage<D>>,
+    ) -> Self {
+        Self {
+            decision_header: DecisionNodeHeader::new(
+                seq_no,
+                Some(Digest::blank()),
+                digest,
                 client_commands.len(),
             ),
             client_commands,
@@ -160,6 +143,10 @@ impl<D> DecisionNode<D> {
             true
         }
     }
+    
+    pub(crate) fn into_commands(self) -> Vec<StoredMessage<D>> {
+        self.client_commands
+    }
 }
 
 impl<D> PartialEq for DecisionNode<D> {
@@ -194,6 +181,51 @@ impl<D> Debug for DecisionNode<D> {
     }
 }
 
+impl<D> From<DecisionNode<D>> for (DecisionNodeHeader, Vec<StoredMessage<D>>) {
+    fn from(value: DecisionNode<D>) -> Self {
+        (value.decision_header, value.client_commands)
+    }
+}
+
+#[derive(Getters)]
+pub struct DecisionHandler<QC> {
+    latest_qc: Option<QC>,
+    #[getset(get = "pub")]
+    latest_prepare_qc: Option<QC>,
+    #[getset(get = "pub")]
+    latest_locked_qc: Option<QC>
+}
+
+impl<QC> DecisionHandler<QC> where QC: TQuorumCertificate {
+    pub fn safe_node<D>(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
+        match (node.decision_header.previous_block, self.latest_qc()) {
+            (Some(prev), Some(latest_qc)) => {
+                prev == latest_qc.decision_node().current_block_digest
+                    && qc.sequence_number() > latest_qc.sequence_number()
+            }
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn latest_qc(&self) -> Option<QC> {
+        self.latest_qc.clone()
+    }
+
+    fn install_latest_qc(&mut self, qc: QC) {
+        self.latest_qc = Some(qc);
+    }
+    
+    pub(crate) fn install_latest_prepare_qc(&mut self, qc: QC) {
+        self.latest_prepare_qc = Some(qc);
+    }
+    
+    pub(crate) fn install_latest_locked_qc(&mut self, qc: QC) {
+        self.latest_locked_qc = Some(qc);
+    }
+}
+
+
 impl<QC> Default for DecisionHandler<QC> {
     fn default() -> Self {
         Self {
@@ -201,11 +233,5 @@ impl<QC> Default for DecisionHandler<QC> {
             latest_prepare_qc: Option::default(),
             latest_locked_qc: Option::default(),
         }
-    }
-}
-
-impl<D> From<DecisionNode<D>> for (DecisionNodeHeader, Vec<StoredMessage<D>>) {
-    fn from(value: DecisionNode<D>) -> Self {
-        (value.decision_header, value.client_commands)
     }
 }

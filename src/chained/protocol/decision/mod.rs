@@ -1,11 +1,15 @@
+use crate::chained::chained_decision_tree::ChainedDecisionNode;
 use crate::chained::messages::serialize::IronChainSer;
-use crate::chained::messages::{IronChainMessage, IronChainMessageType, ProposalMessage, VoteMessage};
+use crate::chained::messages::{
+    IronChainMessage, IronChainMessageType, ProposalMessage, VoteMessage,
+};
 use crate::chained::protocol::log::{DecisionLog, NewViewGenerateError, NewViewStore};
 use crate::chained::protocol::msg_queue::ChainedHotStuffMsgQueue;
 use crate::chained::{ChainedDecisionHandler, ChainedQC, IronChainPollResult};
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
 use crate::decision_tree::{DecisionNode, DecisionNodeHeader, TQuorumCertificate};
 use crate::metric::SIGNATURE_VOTE_LATENCY_ID;
+use crate::req_aggr::{ReqAggregator, RequestAggr};
 use crate::view::View;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -18,7 +22,8 @@ use atlas_metrics::metrics::metric_duration;
 use getset::{Getters, Setters};
 use std::sync::Arc;
 use std::time::Instant;
-use crate::req_aggr::{ReqAggregator, RequestAggr};
+use thiserror::Error;
+use atlas_common::crypto::hash::Digest;
 
 pub(super) enum ChainedDecisionState {
     Prepare(usize, bool),
@@ -29,12 +34,11 @@ pub(super) enum ChainedDecisionState {
 }
 
 pub(super) enum ChainedDecisionResult<D> {
-    ProposalGenerated(
-        DecisionNodeHeader,
-        ChainedQC,
+    ProposalGenerated(DecisionNodeHeader, ShareableMessage<IronChainMessage<D>>),
+    VoteGenerated(
+        ChainedDecisionNode<D>,
         ShareableMessage<IronChainMessage<D>>,
     ),
-    VoteGenerated(Option<DecisionNode<D>> ,ChainedQC, ShareableMessage<IronChainMessage<D>>),
     MessageIgnored,
     MessageProcessed(ShareableMessage<IronChainMessage<D>>),
 }
@@ -43,10 +47,12 @@ pub(super) enum ChainedDecisionResult<D> {
 pub(super) struct ChainedDecision<RQ> {
     #[get = "pub"]
     view: View,
-    #[getset(get = "pub", set = "pub")]
-    proposal: Option<DecisionNode<RQ>>,
+    #[get = "pub"]
+    node_id: NodeId,
     #[getset(get = "pub", set = "pub")]
     state: ChainedDecisionState,
+    #[getset(get = "pub", set = "")]
+    decision_node_digest: Option<Digest>,
     msg_queue: ChainedHotStuffMsgQueue<RQ>,
     decision_log: DecisionLog,
 }
@@ -64,8 +70,9 @@ where
 
         Self {
             view,
-            proposal: None,
+            node_id,
             state: ChainedDecisionState::Prepare(0, false),
+            decision_node_digest: None,
             msg_queue: ChainedHotStuffMsgQueue::default(),
             decision_log,
         }
@@ -81,7 +88,36 @@ where
 
         IronChainPollResult::ReceiveMsg
     }
+    
+    fn is_next_leader(&self) -> bool {
+        *self.node_id() == self.view.next_view().primary()
+    }
 
+    pub(super) fn process_message_next_leader<CR, CP, NT>(
+        &mut self,
+        decision_handler: &mut ChainedDecisionHandler,
+        crypto: &Arc<CR>,
+        message: ShareableMessage<IronChainMessage<RQ>>,
+        network: Arc<NT>,
+    ) -> Result<ChainedDecisionResult<RQ>, NewViewGenerateError<CP::CombinationError>>
+    where
+        CR: CryptoInformationProvider,
+        CP: CryptoProvider,
+        NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,{
+        match message.message().message() {
+            IronChainMessageType::Vote(vote_msg)
+            if message.message().sequence_number() == self.sequence_number() 
+            && self.is_next_leader()
+            => {
+                
+                
+                todo!()
+            }
+            _ =>  unreachable!()
+        }
+        
+    }
+    
     pub(super) fn process_message_leader<CR, CP, NT>(
         &mut self,
         rq_aggr: &Arc<RequestAggr<RQ>>,
@@ -93,12 +129,16 @@ where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,
-    {
-        let vote_msg = match message.message().message() {
-            IronChainMessageType::Vote(vote_msg)
+    { 
+        match message.message().message() {
+            IronChainMessageType::NewView(new_view)
                 if message.message().sequence_number() == self.sequence_number() =>
             {
-                vote_msg.clone()
+                if !self.decision_log
+                    .as_mut_leader()
+                    .accept_new_view(message.header().from(), new_view.clone()) {
+                    return Ok(ChainedDecisionResult::MessageIgnored);
+                }
             }
             _ => return Ok(ChainedDecisionResult::MessageIgnored),
         };
@@ -106,38 +146,31 @@ where
         let ChainedDecisionState::Prepare(received, proposed) = &mut self.state else {
             return Ok(ChainedDecisionResult::MessageIgnored);
         };
-
-        self.decision_log
-            .as_mut_leader()
-            .accept_new_view(message.header().from(), vote_msg);
-
+        
         if *received >= self.view.quorum() && !*proposed {
             let (requests, digest) = rq_aggr.take_pool_requests();
 
             let decision_node = if let Some(qc) = self.decision_log.as_mut_leader().get_high_qc() {
-                DecisionNode::create_leaf(qc.decision_node(), digest, requests)
+                ChainedDecisionNode::create_leaf(self.view.sequence_number(), qc.decision_node(), digest, requests, qc.clone())
             } else {
-                DecisionNode::create_root(&self.view, digest, requests)
+                ChainedDecisionNode::create_root(&self.view, digest, requests)
             };
 
-            let qc = self
-                .decision_log
-                .as_mut_leader()
-                .create_new_qc::<CR, CP>(crypto, decision_node.decision_header())?;
-
             *proposed = true;
-            
+
             let decision_node_header = *decision_node.decision_header();
-            
-            let proposal = ProposalMessage::new(decision_node, qc.clone());
-            
-            let hot_iron = IronChainMessage::new(self.sequence_number(), IronChainMessageType::Proposal(proposal));
-            
+
+            let proposal = ProposalMessage::new(decision_node);
+
+            let hot_iron = IronChainMessage::new(
+                self.sequence_number(),
+                IronChainMessageType::Proposal(proposal),
+            );
+
             let _ = network.broadcast_signed(hot_iron, self.view.quorum_members().iter().cloned());
-            
+
             Ok(ChainedDecisionResult::ProposalGenerated(
                 decision_node_header,
-                qc,
                 message,
             ))
         } else {
@@ -166,17 +199,18 @@ where
             _ => return ChainedDecisionResult::MessageIgnored,
         };
 
-        if !decision_handler.safe_node(proposal_message.proposal(), proposal_message.qc()) {
-            return ChainedDecisionResult::MessageIgnored;
+        if let Some(qc) = proposal_message.proposal().justify() {
+            if !decision_handler.safe_node(proposal_message.proposal(), qc) {
+                return ChainedDecisionResult::MessageIgnored;
+            }
+            
+            decision_handler.install_latest_prepare_qc(qc.clone());
         }
-        
-        let ProposalMessage {
-            proposal,
-            qc,
-        } = proposal_message;
-        
-        decision_handler.install_latest_prepare_qc(qc.clone());
 
+        let ProposalMessage { proposal } = proposal_message;
+
+        self.decision_node_digest = Some(proposal.decision_header().current_block_digest());
+        
         self.state = ChainedDecisionState::PreCommit;
 
         threadpool::execute({
@@ -185,33 +219,43 @@ where
             let crypto = crypto.clone();
 
             let view = self.view.clone();
-            
-            let qc = qc.clone();
+
+            let decision_node_header = *proposal.decision_header();
 
             move || {
                 // Send the message signing processing to the thread pool
 
                 let start_time = Instant::now();
-                
-                let msg_signature = get_partial_signature_for_message::<CR, CP, ChainedQC>(
+
+                let msg_signature = get_partial_signature_for_message::<CR, CP, DecisionNodeHeader>(
                     &*crypto,
                     view.sequence_number(),
-                    &qc,
+                    &decision_node_header,
                 );
 
                 metric_duration(SIGNATURE_VOTE_LATENCY_ID, start_time.elapsed());
 
-                let vote_msg = IronChainMessageType::Vote(VoteMessage::new(Some(qc), msg_signature));
+                let vote_msg = IronChainMessageType::Vote(VoteMessage::new(
+                    decision_node_header,
+                    msg_signature,
+                ));
+
+                let next_leader = view.next_view().primary();
 
                 let _ = network.send(
                     IronChainMessage::new(view.sequence_number(), vote_msg),
-                    view.primary(),
+                    next_leader,
                     true,
                 );
             }
         });
-        
-        ChainedDecisionResult::VoteGenerated(Some(proposal), qc, message)
+
+        ChainedDecisionResult::VoteGenerated(proposal, message)
+    }
+    
+    pub(super) fn finalize(self) -> Result<Digest, FinalizeDecisionError>{
+        self.decision_node_digest
+            .ok_or(FinalizeDecisionError::FailedToFinalizeDecisionMissingDigest)
     }
 }
 
@@ -219,4 +263,10 @@ impl<RQ> Orderable for ChainedDecision<RQ> {
     fn sequence_number(&self) -> SeqNo {
         self.view.sequence_number()
     }
+}
+
+#[derive(Clone, Debug, Error)]
+pub enum FinalizeDecisionError {
+    #[error("Failed to finalize decision, missing digest")]
+    FailedToFinalizeDecisionMissingDigest
 }

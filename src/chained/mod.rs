@@ -8,11 +8,10 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
-use atlas_core::ordering_protocol::{
-    DecisionAD, DecisionMetadata, OPExecResult, OPPollResult, ProtocolMessage,
-};
+use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, OPExecResult, OPPollResult, ProtocolMessage};
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use getset::Getters;
+#[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -21,6 +20,13 @@ mod protocol;
 mod chained_decision_tree;
 
 type IronChainResult<RQ> = OPExecResult<
+    DecisionMetadata<RQ, IronChainSer<RQ>>,
+    DecisionAD<RQ, IronChainSer<RQ>>,
+    ProtocolMessage<RQ, IronChainSer<RQ>>,
+    RQ,
+>;
+
+type IronChainDecision<RQ> = Decision<
     DecisionMetadata<RQ, IronChainSer<RQ>>,
     DecisionAD<RQ, IronChainSer<RQ>>,
     ProtocolMessage<RQ, IronChainSer<RQ>>,

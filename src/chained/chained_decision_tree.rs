@@ -1,30 +1,94 @@
+use crate::chained::ChainedQC;
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader, TQuorumCertificate};
+use crate::view::View;
 use atlas_common::collections::HashMap;
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
+use atlas_common::crypto::hash::Digest;
+use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::message::StoredMessage;
+use getset::Getters;
+use serde::{Deserialize, Serialize};
+use std::ops::Deref;
+
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Hash, Eq, PartialEq, Getters)]
+pub struct ChainedDecisionNode<D> {
+    node: DecisionNode<D>,
+    #[get = "pub"]
+    justify: Option<ChainedQC>,
+}
+
+impl<D> ChainedDecisionNode<D> {
+    pub fn create_root(
+        view: &View,
+        digest: Digest,
+        client_commands: Vec<StoredMessage<D>>,
+    ) -> Self {
+        let node = DecisionNode::create_root(view, digest, client_commands);
+
+        Self {
+            node,
+            justify: None,
+        }
+    }
+
+    pub fn create_leaf(
+        view_seq: SeqNo,
+        previous_node: &DecisionNodeHeader,
+        digest: Digest,
+        client_commands: Vec<StoredMessage<D>>,
+        justify: ChainedQC,
+    ) -> Self {
+        let node = if previous_node.current_block_digest()
+            == justify.decision_node().current_block_digest()
+            && justify.decision_node().sequence_number() == view_seq.prev()
+        {
+            DecisionNode::create_leaf(previous_node, digest, client_commands)
+        } else {
+            DecisionNode::create_blank_branch_node(view_seq, digest, client_commands)
+        };
+
+        Self {
+            node,
+            justify: Some(justify),
+        }
+    }
+
+    pub fn into_decision_node(self) -> DecisionNode<D> {
+        self.node
+    }
+}
+
+impl<D> Deref for ChainedDecisionNode<D> {
+    type Target = DecisionNode<D>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
+}
 
 pub struct PendingDecisionNodes<D> {
-    map: HashMap<DecisionNodeHeader, DecisionNode<D>>
+    map: HashMap<Digest, ChainedDecisionNode<D>>,
 }
 
 impl<D> PendingDecisionNodes<D> {
-    
-    pub(in super) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            map: HashMap::default()
+            map: HashMap::default(),
         }
     }
-    
-    pub(in super) fn insert(&mut self, node: DecisionNode<D>) {
-        self.map.insert(*node.decision_header(), node);
+
+    pub(super) fn insert(&mut self, node: ChainedDecisionNode<D>) {
+        self.map
+            .insert(node.decision_header().current_block_digest(), node);
     }
-    
-    pub(in super) fn get(&self, header: &DecisionNodeHeader) -> Option<&DecisionNode<D>> {
+
+    pub(super) fn get(&self, header: &Digest) -> Option<&ChainedDecisionNode<D>> {
         self.map.get(header)
     }
-    
-    pub(in super) fn remove(&mut self, header: &DecisionNodeHeader) -> Option<DecisionNode<D>> {
+
+    pub(super) fn remove(&mut self, header: &Digest) -> Option<ChainedDecisionNode<D>> {
         self.map.remove(header)
     }
-    
 }
 
 impl<D> Default for PendingDecisionNodes<D> {
