@@ -26,16 +26,6 @@ use thiserror::Error;
 use tracing::{debug, instrument, warn};
 use crate::req_aggr::RequestAggr;
 
-/// A data structure to keep track of any consensus instances that have been signalled
-///
-/// A consensus instance being signalled means it should be polled.
-#[derive(Debug, Default)]
-pub struct Signals {
-    // Prevent duplicates efficiently
-    signaled_nos: BTreeSet<SeqNo>,
-    signaled_seq_no: BinaryHeap<Reverse<SeqNo>>,
-}
-
 pub(crate) struct HotStuffProtocol<RQ, NT>
 where
     RQ: SerMsg,
@@ -394,6 +384,16 @@ where
     }
 }
 
+/// A data structure to keep track of any consensus instances that have been signalled
+///
+/// A consensus instance being signalled means it should be polled.
+#[derive(Debug, Default)]
+pub struct Signals {
+    // Prevent duplicates efficiently
+    signaled_nos: BTreeSet<SeqNo>,
+    signaled_seq_no: BinaryHeap<Reverse<SeqNo>>,
+}
+
 impl Signals {
     fn new(watermark: u32) -> Self {
         Self {
@@ -403,7 +403,7 @@ impl Signals {
     }
 
     /// Pop a signalled sequence number
-    fn pop_signalled(&mut self) -> Option<SeqNo> {
+    pub(crate) fn pop_signalled(&mut self) -> Option<SeqNo> {
         self.signaled_seq_no.pop().map(|reversed| {
             let seq_no = reversed.0;
 
@@ -414,13 +414,13 @@ impl Signals {
     }
 
     /// Mark a given sequence number as signalled
-    fn push_signalled(&mut self, seq: SeqNo) {
+    pub(crate) fn push_signalled(&mut self, seq: SeqNo) {
         if self.signaled_nos.insert(seq) {
             self.signaled_seq_no.push(Reverse(seq));
         }
     }
 
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.signaled_nos.clear();
         self.signaled_seq_no.clear();
     }

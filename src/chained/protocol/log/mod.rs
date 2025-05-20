@@ -1,16 +1,19 @@
-use crate::chained::messages::{NewViewMessage, VoteMessage};
+use std::collections::hash_map::Entry;
+use crate::chained::messages::{NewViewMessage, VoteDetails, VoteMessage};
 use crate::chained::ChainedQC;
-use crate::crypto::{combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner};
+use crate::crypto::{
+    combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner,
+};
 use crate::decision_tree::DecisionNodeHeader;
+use crate::view::View;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use std::collections::HashSet;
 use std::error::Error;
 use thiserror::Error;
-use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use crate::view::View;
 
 pub enum DecisionLog {
     /// The decision log for the leader
@@ -25,6 +28,14 @@ impl DecisionLog {
             log
         } else {
             unreachable!("Not a leader log")
+        }
+    }
+
+    pub fn as_mut_next_leader(&mut self) -> &mut VoteStore {
+        if let DecisionLog::NextLeader(log) = self {
+            log
+        } else {
+            unreachable!("Not a next leader log")
         }
     }
 }
@@ -55,9 +66,10 @@ impl NewViewStore {
     }
 }
 
+
 #[derive(Default)]
 pub struct VoteStore {
-    votes: HashMap<DecisionNodeHeader, HashMap<NodeId, PartialSignature>>,
+    votes: HashMap<VoteDetails, HashMap<NodeId, PartialSignature>>,
 }
 
 impl VoteStore {
@@ -65,12 +77,23 @@ impl VoteStore {
         &mut self,
         voter: NodeId,
         vote_message: VoteMessage,
-    ) -> bool {
-        let VoteMessage { node, signature } = vote_message;
+    ) -> Option<usize> {
+        let VoteMessage { vote_details, signature } = vote_message;
 
-        let previous = self.votes.entry(node).or_default().insert(voter, signature);
+        let votes_for_details = self.votes.entry(vote_details).or_default();
 
-        previous.is_none()
+        if let Entry::Vacant(e) = votes_for_details.entry(voter) {
+            
+            e.insert(signature);
+
+            Some(votes_for_details.len())
+        } else {
+            None
+        }
+    }
+    
+    pub(in super::super) fn get_high_justify_qc(&self) -> Option<&VoteDetails> {
+        self.votes.keys().max_by_key(|node| node.justify().map_or(SeqNo::ZERO, Orderable::sequence_number))
     }
 
     pub(in super::super) fn get_quorum_qc<CR, CP>(
@@ -91,7 +114,7 @@ impl VoteStore {
         if votes.len() < view.quorum() {
             return Err(ChainedQCGenerateError::NotEnoughVotes);
         }
-        
+
         let votes = votes
             .iter()
             .map(|(node, sig)| (*node, sig.clone()))
@@ -100,7 +123,11 @@ impl VoteStore {
         let combined_signature = combine_partial_signatures::<CR, CP>(crypto_info, &votes)
             .map_err(ChainedQCGenerateError::FailedToCombinePartialSignatures)?;
 
-        Ok(ChainedQC::new(view.sequence_number(), node.clone(), combined_signature))
+        Ok(ChainedQC::new(
+            view.sequence_number(),
+            *node.node(),
+            combined_signature,
+        ))
     }
 }
 
@@ -112,6 +139,8 @@ pub enum NewViewGenerateError<CS: Error> {
     FailedToCombinePartialSignatures(#[from] CS),
     #[error("Failed to collect the highest vote")]
     NotEnoughVotes,
+    #[error("Failed to generate QC from votes {0:?}")]
+    FailedToGenerateQC(#[from] ChainedQCGenerateError<CS>),
 }
 
 #[derive(Error, Debug)]

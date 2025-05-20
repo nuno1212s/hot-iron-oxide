@@ -13,17 +13,19 @@ use crate::chained::{
 };
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
 use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertificate};
+use crate::protocol::hotstuff::Signals;
 use crate::req_aggr::ReqAggregator;
 use crate::view::View;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::Orderable;
+use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::{ClientRqInfo, SessionBased};
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{
-    BatchedDecision, Decision, DecisionsAhead, ProtocolConsensusDecision, ShareableMessage,
+    BatchedDecision, Decision, DecisionsAhead, OPPollResult, ProtocolConsensusDecision,
+    ShareableMessage,
 };
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use either::Either;
@@ -31,6 +33,9 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
+
+const PROTOCOL_PHASES: u8 = 4;
+const PROTOCOL_PHASES_USIZE: usize = PROTOCOL_PHASES as usize;
 
 pub(crate) struct ChainedHotStuffProtocol<RQ, RQA> {
     node_id: NodeId,
@@ -40,16 +45,18 @@ pub(crate) struct ChainedHotStuffProtocol<RQ, RQA> {
     request_aggr: Arc<RQA>,
 
     timeouts: TimeoutModHandle,
-
     decision_list: VecDeque<ChainedDecision<RQ>>,
-
+    signal: Signals,
     pending_nodes: PendingDecisionNodes<RQ>,
     curr_view: View,
     last_decided_view: Option<View>,
 }
 
-const PROTOCOL_PHASES: u8 = 4;
-const PROTOCOL_PHASES_USIZE: usize = PROTOCOL_PHASES as usize;
+impl<RQ, RQA> Orderable for ChainedHotStuffProtocol<RQ, RQA> {
+    fn sequence_number(&self) -> SeqNo {
+        self.curr_view.sequence_number()
+    }
+}
 
 impl<RQ, RQA> ChainedHotStuffProtocol<RQ, RQA>
 where
@@ -81,17 +88,45 @@ where
             request_aggr: rq_aggr,
             timeouts,
             decision_list,
+            signal: Signals::default(),
             pending_nodes: PendingDecisionNodes::default(),
             curr_view,
             last_decided_view: None,
         }
     }
 
-    fn poll(&mut self) -> IronChainPollResult<RQ> {
+    fn get_decision(&mut self, seq_no: SeqNo) -> Option<&mut ChainedDecision<RQ>> {
+        match seq_no.index(self.sequence_number()) {
+            Either::Right(index) => self.decision_list.get_mut(index),
+            Either::Left(_) => None,
+        }
+    }
+
+    pub(super) fn poll(&mut self) -> IronChainPollResult<RQ> {
+        while let Some(seq) = self.signal.pop_signalled() {
+            let Some(decision) = self.get_decision(seq) else {
+                error!("Decision not found for seq_no: {seq:?}");
+                continue;
+            };
+
+            let poll_result = decision.poll();
+
+            match poll_result {
+                OPPollResult::RunCst => {
+                    return IronChainPollResult::RunCst;
+                }
+                OPPollResult::ReceiveMsg => return IronChainPollResult::ReceiveMsg,
+                OPPollResult::Exec(message) => (),
+                OPPollResult::ProgressedDecision(_, _) => (),
+                OPPollResult::QuorumJoined(_, _, _) => (),
+                OPPollResult::RePoll => (),
+            }
+        }
+
         todo!()
     }
 
-    fn process_message<CR, CP, NT>(
+    pub(super) fn process_message<CR, CP, NT>(
         &mut self,
         crypto: &Arc<CR>,
         network: &Arc<NT>,

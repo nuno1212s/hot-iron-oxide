@@ -20,7 +20,7 @@ use atlas_core::ordering_protocol::{
 };
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
 use lazy_static::lazy_static;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tracing::trace;
 use atlas_core::timeouts::TimeOutable;
 use decision_tree::DecisionNodeHeader;
@@ -31,13 +31,11 @@ pub mod protocol;
 mod loggable_protocol;
 pub mod metric;
 pub mod view;
-mod chained;
+pub mod chained;
 mod decision_tree;
 mod req_aggr;
 
-lazy_static! {
-    static ref MOD_NAME: Arc<str> = Arc::from("HOT-IRON");
-}
+static MOD_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("HOT-IRON"));
 
 pub struct HotIron<RQ, NT, CR>
 where
