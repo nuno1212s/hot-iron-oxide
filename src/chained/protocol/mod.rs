@@ -102,6 +102,14 @@ where
         }
     }
 
+    pub(crate) fn view(&self) -> &View {
+        &self.curr_view
+    }
+    
+    pub(crate) fn install_view(&mut self, view: View) {
+        self.curr_view = view;
+    }
+
     pub(super) fn poll(&mut self) -> IronChainPollResult<RQ> {
         while let Some(seq) = self.signal.pop_signalled() {
             let Some(decision) = self.get_decision(seq) else {

@@ -86,14 +86,14 @@ where
     pub fn install_seq_no(&mut self, mut seq_no: SeqNo) {
         self.current_view = self.current_view.with_new_seq(seq_no);
 
-        let decision = self
+        let last_decision_view = self
             .decisions
-            .pop_back()
-            .expect("Cannot have empty decision queue")
-            .view()
-            .clone();
+            .back()
+            .map(HSDecision::view)
+            .cloned()
+            .unwrap_or(self.current_view.clone());
 
-        let new_view = decision.with_new_seq(seq_no);
+        let new_view = last_decision_view.with_new_seq(seq_no);
 
         let decisions_to_pop = self.decisions.len();
 

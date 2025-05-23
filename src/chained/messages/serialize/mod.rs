@@ -3,11 +3,10 @@ use crate::decision_tree::DecisionNodeHeader;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
-use atlas_core::ordering_protocol::networking::serialize::{
-    OrderProtocolVerificationHelper, OrderingProtocolMessage,
-};
+use atlas_core::ordering_protocol::networking::serialize::{OrderProtocolVerificationHelper, OrderingProtocolMessage, PermissionedOrderingProtocolMessage};
 use std::marker::PhantomData;
 use std::sync::Arc;
+use atlas_core::ordering_protocol::PermissionedOrderingProtocol;
 use crate::chained::ChainedQC;
 
 pub struct IronChainSer<RQ>(PhantomData<fn() -> RQ>);

@@ -65,7 +65,7 @@ where
     }
 }
 
-impl<RQ> PersistentOrderProtocolTypes<RQ, Self> for IronChainSer<RQ> 
+impl<RQ> PersistentOrderProtocolTypes<RQ, Self> for IronChainSer<RQ>
 where
     RQ: SerMsg,
 {

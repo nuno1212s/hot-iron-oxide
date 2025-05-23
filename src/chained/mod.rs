@@ -10,16 +10,14 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::SessionBased;
-use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
-use atlas_core::ordering_protocol::{
-    Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OPResult,
-    OrderProtocolTolerance, OrderingProtocol, ProtocolMessage, ShareableConsensusMessage,
-};
+use atlas_core::ordering_protocol::networking::{NetworkedOrderProtocolInitializer, OrderProtocolSendNode};
+use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OPResult, OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage, ShareableConsensusMessage};
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock};
+use crate::config::HotIronInitConfig;
 
 mod chained_decision_tree;
 pub mod messages;
@@ -139,7 +137,7 @@ where
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
 {
     type Serialization = IronChainSer<RQ>;
-    type Config = ();
+    type Config = HotIronInitConfig<CR>;
 
     fn handle_off_ctx_message(
         &mut self,
@@ -173,6 +171,47 @@ where
 
     fn install_seq_no(&mut self, seq_no: SeqNo) -> atlas_common::error::Result<()> {
         todo!()
+    }
+}
+
+impl<RQ, RP, NT, CR> NetworkedOrderProtocolInitializer<RQ, RP, NT> for IronChain<RQ, NT, CR>
+where
+    RQ: SerMsg + SessionBased,
+    NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
+    CR: CryptoInformationProvider + Send + Sync,
+{
+    fn initialize(config: Self::Config, ordering_protocol_args: OrderingProtocolArgs<RQ, RP, NT>) -> atlas_common::error::Result<Self>
+    where
+        Self: Sized
+    {
+
+        let OrderingProtocolArgs(node_id, timeout, rq, batch_output, node, quorum) =
+            ordering_protocol_args;
+
+        let HotIronInitConfig { quorum_info } = config;
+
+        let request_aggr = RequestAggr::new(batch_output);
+        
+        let view = View::new_from_quorum(SeqNo::ZERO, quorum);
+        
+        Ok(IronChain::new(node_id, node, request_aggr, timeout, Arc::new(quorum_info), view))
+    }
+}
+
+impl<RQ, NT, CR> PermissionedOrderingProtocol for IronChain<RQ, NT, CR>
+where
+    RQ: SerMsg + SessionBased,
+    NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
+    CR: CryptoInformationProvider + Send + Sync,
+{
+    type PermissionedSerialization = IronChainSer<RQ>;
+
+    fn view(&self) -> atlas_core::ordering_protocol::View<Self::PermissionedSerialization> {
+        self.protocol.view().clone()
+    }
+
+    fn install_view(&mut self, view: atlas_core::ordering_protocol::View<Self::PermissionedSerialization>) {
+        self.protocol.install_view(view);
     }
 }
 
