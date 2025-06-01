@@ -6,7 +6,8 @@ use crate::chained::chained_decision_tree::{ChainedDecisionNode, PendingDecision
 use crate::chained::messages::serialize::IronChainSer;
 use crate::chained::messages::IronChainMessage;
 use crate::chained::protocol::decision::{
-    ChainedDecision, ChainedDecisionResult, ChainedDecisionState, FinalizeDecisionError,
+    ChainedDecision, ChainedDecisionPollResult, ChainedDecisionResult, ChainedDecisionState,
+    FinalizeDecisionError,
 };
 use crate::chained::{
     ChainedDecisionHandler, IronChainDecision, IronChainPollResult, IronChainResult,
@@ -16,6 +17,7 @@ use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertifica
 use crate::protocol::hotstuff::Signals;
 use crate::req_aggr::ReqAggregator;
 use crate::view::View;
+use crate::HotIronPollResult;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
@@ -32,7 +34,7 @@ use either::Either;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::error;
+use tracing::{debug, error};
 
 const PROTOCOL_PHASES: u8 = 4;
 const PROTOCOL_PHASES_USIZE: usize = PROTOCOL_PHASES as usize;
@@ -105,33 +107,123 @@ where
     pub(crate) fn view(&self) -> &View {
         &self.curr_view
     }
-    
-    pub(crate) fn install_view(&mut self, view: View) {
-        self.curr_view = view;
-    }
 
-    pub(super) fn poll(&mut self) -> IronChainPollResult<RQ> {
-        while let Some(seq) = self.signal.pop_signalled() {
-            let Some(decision) = self.get_decision(seq) else {
-                error!("Decision not found for seq_no: {seq:?}");
-                continue;
-            };
+    pub(crate) fn install_view(&mut self, view: View) -> Result<(), InstallViewError> {
+        match view.sequence_number().index(self.sequence_number()) {
+            Either::Right(index) => {
+                let phases_to_create = if index >= self.decision_list.len() {
+                    self.decision_list.clear();
 
-            let poll_result = decision.poll();
+                    PROTOCOL_PHASES_USIZE
+                } else {
+                    // Remove all decisions that are before the new view
+                    (0..index).for_each(|i| {
+                        self.decision_list.pop_front();
+                    });
 
-            match poll_result {
-                OPPollResult::RunCst => {
-                    return IronChainPollResult::RunCst;
+                    index
+                };
+
+                let mut current_view = view.clone();
+
+                for _ in 0..phases_to_create {
+                    let chained_decision = ChainedDecision::new(current_view.clone(), self.node_id);
+
+                    self.decision_list.push_back(chained_decision);
+
+                    current_view = current_view.next_view();
                 }
-                OPPollResult::ReceiveMsg => return IronChainPollResult::ReceiveMsg,
-                OPPollResult::Exec(message) => (),
-                OPPollResult::ProgressedDecision(_, _) => (),
-                OPPollResult::QuorumJoined(_, _, _) => (),
-                OPPollResult::RePoll => (),
+            }
+            Either::Left(_) => {
+                return Err(InstallViewError::ViewInPast(view, self.curr_view.clone()))
             }
         }
 
-        todo!()
+        self.curr_view = view;
+        Ok(())
+    }
+
+    pub(super) fn poll(&mut self) -> Result<IronChainPollResult<RQ>, FinalizeDecisionsError>
+    where
+        RQ: SessionBased,
+    {
+        while let Some(seq) = self.signal.pop_signalled() {
+            
+            let poll_result = {
+                // Encapsulate the decision retrieval and polling logic since
+                // We don't need the decision outside of this scope
+                let Some(decision) = self.get_decision(seq) else {
+                    error!("Decision not found for seq_no: {seq:?}");
+                    continue;
+                };
+                
+                decision.poll()
+            };
+
+            match poll_result {
+                ChainedDecisionPollResult::ReceiveMsg => {
+                    return Ok(IronChainPollResult::ReceiveMsg)
+                }
+                ChainedDecisionPollResult::Exec(message) => {
+                    self.signal.push_signalled(seq);
+
+                    return Ok(IronChainPollResult::Exec(message));
+                }
+                ChainedDecisionPollResult::Decided => {
+                    if self.can_finalize() {
+                        let finalized_decisions = self.finalize()?;
+
+                        if !finalized_decisions.is_empty() {
+                            return Ok(IronChainPollResult::ProgressedDecision(
+                                DecisionsAhead::Ignore,
+                                finalized_decisions,
+                            ));
+                        }
+                    } else {
+                        debug!(
+                            "Decision {:?} is not finalized yet",
+                            seq
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(IronChainPollResult::ReceiveMsg)
+    }
+
+    pub(super) fn queue(&mut self, message: ShareableMessage<IronChainMessage<RQ>>) {
+        let message_seq = message.sequence_number();
+
+        let decision_index = match message_seq.index(self.curr_view.sequence_number()) {
+            Either::Right(index) => index,
+            Either::Left(_) => {
+                debug!("Ignoring consensus message {:?} received from {:?} as we are already in seq no {:?}",
+                    message, message.header().from(), self.sequence_number());
+
+                return;
+            } // Message is from a past view, ignore it
+        };
+
+        if decision_index >= self.decision_list.len() {
+            debug!(
+                "Queueing message out of context msg {:?} received from {:?} into tbo queue",
+                message.message(),
+                message.header().from()
+            );
+
+            //TODO: Add message to the tbo queue
+            todo!("Add message to the tbo queue")
+        } else {
+            // Queue the message in the corresponding pending decision
+            self.decision_list
+                .get_mut(decision_index)
+                .unwrap()
+                .queue_message(message);
+
+            // Signal that we are ready to receive messages
+            self.signal.push_signalled(message_seq);
+        }
     }
 
     pub(super) fn process_message<CR, CP, NT>(
@@ -398,4 +490,10 @@ pub enum FinalizeDecisionsError {
     FailedToFinalizeDecision(#[from] FinalizeDecisionError),
     #[error("Failed to get decision node {0:?}")]
     FailedToGetNode(Digest),
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum InstallViewError {
+    #[error("Failed to install view {0:?}, current view is ahead {1:?}")]
+    ViewInPast(View, View),
 }

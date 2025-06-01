@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use crate::chained::ChainedQC;
 use crate::decision_tree::{DecisionNode, DecisionNodeHeader, TQuorumCertificate};
 use crate::view::View;
@@ -63,6 +64,15 @@ impl<D> Deref for ChainedDecisionNode<D> {
 
     fn deref(&self) -> &Self::Target {
         &self.node
+    }
+}
+
+impl<D> Debug for ChainedDecisionNode<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChainedDecisionNode")
+            .field("node", &self.node)
+            .field("justify", &self.justify)
+            .finish()
     }
 }
 

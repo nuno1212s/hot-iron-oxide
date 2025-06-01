@@ -1,5 +1,6 @@
 use crate::chained::messages::serialize::IronChainSer;
 use crate::chained::protocol::ChainedHotStuffProtocol;
+use crate::config::HotIronInitConfig;
 use crate::crypto::{AtlasTHCryptoProvider, CryptoInformationProvider};
 use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertificate};
 use crate::req_aggr::{ReqAggregator, RequestAggr};
@@ -10,19 +11,25 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::SessionBased;
-use atlas_core::ordering_protocol::networking::{NetworkedOrderProtocolInitializer, OrderProtocolSendNode};
-use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OPResult, OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage, ShareableConsensusMessage};
+use atlas_core::ordering_protocol::networking::{
+    NetworkedOrderProtocolInitializer, OrderProtocolSendNode,
+};
+use atlas_core::ordering_protocol::{
+    Decision, DecisionAD, DecisionMetadata, OPExResult, OPExecResult, OPPollResult, OPResult,
+    OrderProtocolTolerance, OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol,
+    ProtocolMessage, ShareableConsensusMessage,
+};
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock};
-use crate::config::HotIronInitConfig;
+use tracing::error;
 
 mod chained_decision_tree;
+mod loggable_protocol;
 pub mod messages;
 mod protocol;
-mod loggable_protocol;
 
 type IronChainResult<RQ> = OPExecResult<
     DecisionMetadata<RQ, IronChainSer<RQ>>,
@@ -57,6 +64,7 @@ where
     node_id: NodeId,
     network_node: Arc<NT>,
     quorum_information: Arc<CR>,
+    is_executing: bool,
     protocol: ChainedHotStuffProtocol<RQ, RequestAggr<RQ>>,
 }
 
@@ -80,6 +88,7 @@ where
             node_id,
             network_node,
             quorum_information,
+            is_executing: false,
             protocol,
         }
     }
@@ -143,15 +152,17 @@ where
         &mut self,
         message: ShareableConsensusMessage<RQ, Self::Serialization>,
     ) {
-        todo!()
+        self.protocol.queue(message);
     }
 
     fn handle_execution_changed(&mut self, is_executing: bool) -> atlas_common::error::Result<()> {
-        todo!()
+        self.is_executing = is_executing;
+
+        Ok(())
     }
 
     fn poll(&mut self) -> atlas_common::error::Result<OPResult<RQ, Self::Serialization>> {
-        Ok(self.protocol.poll())
+        self.protocol.poll().map_err(From::from)
     }
 
     fn process_message(
@@ -170,7 +181,9 @@ where
     }
 
     fn install_seq_no(&mut self, seq_no: SeqNo) -> atlas_common::error::Result<()> {
-        todo!()
+        let view = self.protocol.view().with_new_seq(seq_no);
+
+        self.protocol.install_view(view).map_err(From::from)
     }
 }
 
@@ -180,21 +193,30 @@ where
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
     CR: CryptoInformationProvider + Send + Sync,
 {
-    fn initialize(config: Self::Config, ordering_protocol_args: OrderingProtocolArgs<RQ, RP, NT>) -> atlas_common::error::Result<Self>
+    fn initialize(
+        config: Self::Config,
+        ordering_protocol_args: OrderingProtocolArgs<RQ, RP, NT>,
+    ) -> atlas_common::error::Result<Self>
     where
-        Self: Sized
+        Self: Sized,
     {
-
         let OrderingProtocolArgs(node_id, timeout, rq, batch_output, node, quorum) =
             ordering_protocol_args;
 
         let HotIronInitConfig { quorum_info } = config;
 
         let request_aggr = RequestAggr::new(batch_output);
-        
+
         let view = View::new_from_quorum(SeqNo::ZERO, quorum);
-        
-        Ok(IronChain::new(node_id, node, request_aggr, timeout, Arc::new(quorum_info), view))
+
+        Ok(IronChain::new(
+            node_id,
+            node,
+            request_aggr,
+            timeout,
+            Arc::new(quorum_info),
+            view,
+        ))
     }
 }
 
@@ -210,15 +232,20 @@ where
         self.protocol.view().clone()
     }
 
-    fn install_view(&mut self, view: atlas_core::ordering_protocol::View<Self::PermissionedSerialization>) {
-        self.protocol.install_view(view);
+    fn install_view(
+        &mut self,
+        view: atlas_core::ordering_protocol::View<Self::PermissionedSerialization>,
+    ) {
+        if let Err(err) = self.protocol.install_view(view) {
+            error!("Failed to install view: {:?}", err);
+        }
     }
 }
 
 /// In chained hotstuff, there is only one QC type,
 /// generic which will be used for all the steps of the protocol
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Hash, Eq, PartialEq, Getters)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug, Getters)]
 pub struct ChainedQC {
     /// The sequence number of the QC
     seq_no: SeqNo,

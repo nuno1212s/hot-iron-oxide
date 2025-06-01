@@ -1,5 +1,6 @@
 pub mod serialize;
 
+use std::fmt::{Debug, Formatter};
 use crate::chained::chained_decision_tree::ChainedDecisionNode;
 use crate::chained::ChainedQC;
 use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
@@ -29,6 +30,12 @@ impl<RQ> Orderable for IronChainMessage<RQ> {
     }
 }
 
+impl<RQ> Debug for IronChainMessage<RQ> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "IronChainMessage(seq_no: {:?}, message: {:?})", self.seq_no, self.message)
+    }
+}
+
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub enum IronChainMessageType<D> {
@@ -37,8 +44,18 @@ pub enum IronChainMessageType<D> {
     NewView(NewViewMessage),
 }
 
+impl<D> Debug for IronChainMessageType<D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IronChainMessageType::Proposal(proposal) => write!(f, "Proposal({:?})", proposal),
+            IronChainMessageType::Vote(vote) => write!(f, "Vote({:?})", vote),
+            IronChainMessageType::NewView(new_view) => write!(f, "NewView({:?})", new_view),
+        }
+    }
+}
+
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Hash, Eq, PartialEq, Getters)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug, Getters)]
 #[get = "pub"]
 pub struct VoteMessage {
     pub vote_details: VoteDetails,
@@ -55,7 +72,7 @@ impl VoteMessage {
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Hash, Eq, PartialEq, Getters)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug, Getters)]
 pub struct VoteDetails {
     #[get = "pub"]
     pub node: DecisionNodeHeader,
@@ -80,7 +97,7 @@ impl Orderable for VoteDetails {
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Hash, Eq, PartialEq, Getters)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug, Getters)]
 #[get = "pub"]
 pub struct NewViewMessage {
     pub qc: Option<ChainedQC>,
@@ -106,5 +123,17 @@ pub struct ProposalMessage<D> {
 impl<D> ProposalMessage<D> {
     pub fn new(proposal: ChainedDecisionNode<D>) -> Self {
         Self { proposal }
+    }
+}
+
+impl<D> Orderable for ProposalMessage<D> {
+    fn sequence_number(&self) -> SeqNo {
+        self.proposal.sequence_number()
+    }
+}
+
+impl<D> Debug for ProposalMessage<D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ProposalMessage(proposal: {:?})", self.proposal)
     }
 }

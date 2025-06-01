@@ -26,6 +26,7 @@ use std::time::Instant;
 use thiserror::Error;
 
 pub(super) enum ChainedDecisionState {
+    Init,
     Prepare(usize, bool),
     PreCommit,
     Commit,
@@ -41,6 +42,12 @@ pub(super) enum ChainedDecisionResult<D> {
     ),
     MessageIgnored,
     MessageProcessed(ShareableMessage<IronChainMessage<D>>),
+}
+
+pub(super) enum ChainedDecisionPollResult<D> {
+    Exec(ShareableMessage<IronChainMessage<D>>),
+    ReceiveMsg,
+    Decided,
 }
 
 #[derive(Getters, Setters)]
@@ -78,19 +85,38 @@ where
         }
     }
 
-    pub(super) fn poll(&mut self) -> IronChainPollResult<RQ> {
-        if self.msg_queue.should_poll() {
-            let message = self.msg_queue.pop_message();
-            if let Some(message) = message {
-                return IronChainPollResult::Exec(message);
+    pub(super) fn poll(&mut self) -> ChainedDecisionPollResult<RQ> {
+        return match &self.state {
+            ChainedDecisionState::Init if self.is_next_leader() => {
+                todo!()
             }
-        }
+            ChainedDecisionState::Finalized => ChainedDecisionPollResult::Decided,
+            _ => {
+                if self.msg_queue.should_poll() {
+                    let message = self.msg_queue.pop_message();
 
-        IronChainPollResult::ReceiveMsg
+                    if let Some(message) = message {
+                        return ChainedDecisionPollResult::Exec(message);
+                    }
+                }
+
+                ChainedDecisionPollResult::ReceiveMsg
+            }
+        };
+
+        ChainedDecisionPollResult::ReceiveMsg
+    }
+
+    fn is_leader(&self) -> bool {
+        *self.node_id() == self.view.primary()
     }
 
     fn is_next_leader(&self) -> bool {
         *self.node_id() == self.view.next_view().primary()
+    }
+
+    pub(super) fn queue_message(&mut self, message: ShareableMessage<IronChainMessage<RQ>>) {
+        self.msg_queue.queue_message(message);
     }
 
     pub(super) fn process_message_next_leader<CR, CP, NT>(
@@ -136,11 +162,9 @@ where
 
         match (qc, decision_handler.latest_locked_qc()) {
             (Some(qc), Some(latest_locked_qc))
-                if qc
-                    .justify()
-                    .map_or(SeqNo::ZERO, Orderable::sequence_number)
-                    > latest_locked_qc.sequence_number() => {
-                
+                if qc.justify().map_or(SeqNo::ZERO, Orderable::sequence_number)
+                    > latest_locked_qc.sequence_number() =>
+            {
                 if qc.justify().is_some() {
                     decision_handler.install_latest_prepare_qc(qc.justify().cloned().unwrap());
                 }
