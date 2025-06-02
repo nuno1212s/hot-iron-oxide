@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use crate::chained::ChainedQC;
 use crate::decision_tree::{DecisionNode, DecisionNodeHeader, TQuorumCertificate};
 use crate::view::View;
@@ -8,6 +7,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
 use getset::Getters;
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 use std::ops::Deref;
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]

@@ -34,18 +34,14 @@ use either::Either;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 const PROTOCOL_PHASES: u8 = 4;
 const PROTOCOL_PHASES_USIZE: usize = PROTOCOL_PHASES as usize;
 
 pub(crate) struct ChainedHotStuffProtocol<RQ, RQA> {
     node_id: NodeId,
-
-    decision_handler: ChainedDecisionHandler,
-
     request_aggr: Arc<RQA>,
-
     timeouts: TimeoutModHandle,
     decision_list: VecDeque<ChainedDecision<RQ>>,
     signal: Signals,
@@ -86,7 +82,6 @@ where
 
         Self {
             node_id,
-            decision_handler: DecisionHandler::default(),
             request_aggr: rq_aggr,
             timeouts,
             decision_list,
@@ -103,7 +98,6 @@ where
             Either::Left(_) => None,
         }
     }
-
     pub(crate) fn view(&self) -> &View {
         &self.curr_view
     }
@@ -133,6 +127,9 @@ where
 
                     current_view = current_view.next_view();
                 }
+                
+                self.signal.clear();
+                self.signal.push_signalled(view.sequence_number());
             }
             Either::Left(_) => {
                 return Err(InstallViewError::ViewInPast(view, self.curr_view.clone()))
@@ -143,21 +140,25 @@ where
         Ok(())
     }
 
-    pub(super) fn poll(&mut self) -> Result<IronChainPollResult<RQ>, FinalizeDecisionsError>
+    pub(super) fn poll<NT>(
+        &mut self,
+        network: &Arc<NT>,
+        decision_handler: &ChainedDecisionHandler,
+    ) -> Result<IronChainPollResult<RQ>, FinalizeDecisionsError>
     where
         RQ: SessionBased,
+        NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
     {
         while let Some(seq) = self.signal.pop_signalled() {
-            
             let poll_result = {
-                // Encapsulate the decision retrieval and polling logic since
-                // We don't need the decision outside of this scope
+                let rq_aggr = self.request_aggr.clone();
+
                 let Some(decision) = self.get_decision(seq) else {
                     error!("Decision not found for seq_no: {seq:?}");
                     continue;
                 };
-                
-                decision.poll()
+
+                decision.poll(&*rq_aggr, decision_handler, network)
             };
 
             match poll_result {
@@ -169,22 +170,21 @@ where
 
                     return Ok(IronChainPollResult::Exec(message));
                 }
-                ChainedDecisionPollResult::Decided => {
-                    if self.can_finalize() {
-                        let finalized_decisions = self.finalize()?;
+                ChainedDecisionPollResult::Decided if self.can_finalize() => {
+                    let finalized_decisions = self.finalize()?;
 
-                        if !finalized_decisions.is_empty() {
-                            return Ok(IronChainPollResult::ProgressedDecision(
-                                DecisionsAhead::Ignore,
-                                finalized_decisions,
-                            ));
-                        }
-                    } else {
-                        debug!(
-                            "Decision {:?} is not finalized yet",
-                            seq
-                        );
+                    if !finalized_decisions.is_empty() {
+                        return Ok(IronChainPollResult::ProgressedDecision(
+                            DecisionsAhead::Ignore,
+                            finalized_decisions,
+                        ));
                     }
+                }
+                ChainedDecisionPollResult::Decided => {
+                    warn!(
+                        "Decision {:?} is not finalized yet, but is marked as decided",
+                        seq
+                    );
                 }
             }
         }
@@ -230,6 +230,7 @@ where
         &mut self,
         crypto: &Arc<CR>,
         network: &Arc<NT>,
+        decision_handler: &mut ChainedDecisionHandler,
         message: ShareableMessage<IronChainMessage<RQ>>,
     ) -> Result<IronChainResult<RQ>, IronChainProcessError>
     where
@@ -252,12 +253,8 @@ where
             return Ok(IronChainResult::MessageQueued);
         };
 
-        let result = decision.process_message::<CR, CP, NT>(
-            &mut self.decision_handler,
-            crypto,
-            network,
-            message,
-        );
+        let result =
+            decision.process_message::<CR, CP, NT>(decision_handler, crypto, network, message);
 
         match result {
             ChainedDecisionResult::ProposalGenerated(proposal_header, message) => {
@@ -278,6 +275,7 @@ where
                 Ok(IronChainResult::MessageProcessedNoUpdate)
             }
             ChainedDecisionResult::MessageIgnored => Ok(IronChainResult::MessageDropped),
+            ChainedDecisionResult::NextLeaderMessages() => Ok(IronChainResult::MessageDropped),
         }
     }
 

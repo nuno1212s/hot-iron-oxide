@@ -1,4 +1,3 @@
-use std::collections::hash_map::Entry;
 use crate::chained::messages::{NewViewMessage, VoteDetails, VoteMessage};
 use crate::chained::ChainedQC;
 use crate::crypto::{
@@ -11,6 +10,7 @@ use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
+use std::collections::hash_map::Entry;
 use std::collections::HashSet;
 use std::error::Error;
 use thiserror::Error;
@@ -66,7 +66,6 @@ impl NewViewStore {
     }
 }
 
-
 #[derive(Default)]
 pub struct VoteStore {
     votes: HashMap<VoteDetails, HashMap<NodeId, PartialSignature>>,
@@ -78,12 +77,14 @@ impl VoteStore {
         voter: NodeId,
         vote_message: VoteMessage,
     ) -> Option<usize> {
-        let VoteMessage { vote_details, signature } = vote_message;
+        let VoteMessage {
+            vote_details,
+            signature,
+        } = vote_message;
 
         let votes_for_details = self.votes.entry(vote_details).or_default();
 
         if let Entry::Vacant(e) = votes_for_details.entry(voter) {
-            
             e.insert(signature);
 
             Some(votes_for_details.len())
@@ -91,9 +92,12 @@ impl VoteStore {
             None
         }
     }
-    
+
     pub(in super::super) fn get_high_justify_qc(&self) -> Option<&VoteDetails> {
-        self.votes.keys().max_by_key(|node| node.justify().map_or(SeqNo::ZERO, Orderable::sequence_number))
+        self.votes.keys().max_by_key(|node| {
+            node.justify()
+                .map_or(SeqNo::ZERO, Orderable::sequence_number)
+        })
     }
 
     pub(in super::super) fn get_quorum_qc<CR, CP>(

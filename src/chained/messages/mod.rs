@@ -1,6 +1,5 @@
 pub mod serialize;
 
-use std::fmt::{Debug, Formatter};
 use crate::chained::chained_decision_tree::ChainedDecisionNode;
 use crate::chained::ChainedQC;
 use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
@@ -9,6 +8,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Formatter};
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Hash, Eq, PartialEq, Getters)]
@@ -22,6 +22,11 @@ impl<D> IronChainMessage<D> {
     pub fn new(seq_no: SeqNo, message: IronChainMessageType<D>) -> Self {
         Self { seq_no, message }
     }
+    
+    pub fn into_parts(self) -> (SeqNo, IronChainMessageType<D>) {
+        (self.seq_no, self.message)
+    }
+    
 }
 
 impl<RQ> Orderable for IronChainMessage<RQ> {
@@ -32,7 +37,11 @@ impl<RQ> Orderable for IronChainMessage<RQ> {
 
 impl<RQ> Debug for IronChainMessage<RQ> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "IronChainMessage(seq_no: {:?}, message: {:?})", self.seq_no, self.message)
+        write!(
+            f,
+            "IronChainMessage(seq_no: {:?}, message: {:?})",
+            self.seq_no, self.message
+        )
     }
 }
 
@@ -83,11 +92,10 @@ impl VoteDetails {
     pub fn new(node: DecisionNodeHeader, justify: Option<ChainedQC>) -> Self {
         Self { node, justify }
     }
-    
+
     pub fn justify(&self) -> Option<&ChainedQC> {
         self.justify.as_ref()
     }
-    
 }
 
 impl Orderable for VoteDetails {
@@ -117,12 +125,16 @@ impl NewViewMessage {
 #[derive(Clone, Hash, Eq, PartialEq, Getters)]
 #[get = "pub"]
 pub struct ProposalMessage<D> {
-    pub(super) proposal: ChainedDecisionNode<D>,
+    proposal: ChainedDecisionNode<D>,
 }
 
 impl<D> ProposalMessage<D> {
     pub fn new(proposal: ChainedDecisionNode<D>) -> Self {
         Self { proposal }
+    }
+    
+    pub fn into_parts(self) -> ChainedDecisionNode<D> {
+        self.proposal
     }
 }
 

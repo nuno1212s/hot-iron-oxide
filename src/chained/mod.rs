@@ -30,6 +30,7 @@ mod chained_decision_tree;
 mod loggable_protocol;
 pub mod messages;
 mod protocol;
+mod proof;
 
 type IronChainResult<RQ> = OPExecResult<
     DecisionMetadata<RQ, IronChainSer<RQ>>,
@@ -65,6 +66,7 @@ where
     network_node: Arc<NT>,
     quorum_information: Arc<CR>,
     is_executing: bool,
+    decision_handler: ChainedDecisionHandler,
     protocol: ChainedHotStuffProtocol<RQ, RequestAggr<RQ>>,
 }
 
@@ -89,6 +91,7 @@ where
             network_node,
             quorum_information,
             is_executing: false,
+            decision_handler: DecisionHandler::default(),
             protocol,
         }
     }
@@ -162,7 +165,9 @@ where
     }
 
     fn poll(&mut self) -> atlas_common::error::Result<OPResult<RQ, Self::Serialization>> {
-        self.protocol.poll().map_err(From::from)
+        self.protocol
+            .poll(&self.network_node, &self.decision_handler)
+            .map_err(From::from)
     }
 
     fn process_message(
@@ -174,6 +179,7 @@ where
             .process_message::<CR, AtlasTHCryptoProvider, NT>(
                 &self.quorum_information,
                 &self.network_node,
+                &mut self.decision_handler,
                 message,
             )?;
 

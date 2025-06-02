@@ -1,13 +1,13 @@
-use crate::chained::chained_decision_tree::ChainedDecisionNode;
+use crate::chained::chained_decision_tree::{ChainedDecisionNode, PendingDecisionNodes};
 use crate::chained::messages::serialize::IronChainSer;
 use crate::chained::messages::{
     IronChainMessage, IronChainMessageType, ProposalMessage, VoteDetails, VoteMessage,
 };
 use crate::chained::protocol::log::{DecisionLog, NewViewGenerateError, NewViewStore};
 use crate::chained::protocol::msg_queue::ChainedHotStuffMsgQueue;
-use crate::chained::{ChainedDecisionHandler, ChainedQC, IronChainPollResult};
+use crate::chained::ChainedDecisionHandler;
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader, TQuorumCertificate};
+use crate::decision_tree::{DecisionNodeHeader, TQuorumCertificate};
 use crate::metric::SIGNATURE_VOTE_LATENCY_ID;
 use crate::req_aggr::{ReqAggregator, RequestAggr};
 use crate::view::View;
@@ -42,6 +42,7 @@ pub(super) enum ChainedDecisionResult<D> {
     ),
     MessageIgnored,
     MessageProcessed(ShareableMessage<IronChainMessage<D>>),
+    NextLeaderMessages(),
 }
 
 pub(super) enum ChainedDecisionPollResult<D> {
@@ -85,10 +86,44 @@ where
         }
     }
 
-    pub(super) fn poll(&mut self) -> ChainedDecisionPollResult<RQ> {
+    pub(super) fn poll<RQA, NT>(
+        &mut self,
+        request_aggr: &RQA,
+        decision_handler: &ChainedDecisionHandler,
+        network: &Arc<NT>,
+    ) -> ChainedDecisionPollResult<RQ>
+    where
+        RQA: ReqAggregator<RQ>,
+        NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,
+    {
         return match &self.state {
-            ChainedDecisionState::Init if self.is_next_leader() => {
-                todo!()
+            ChainedDecisionState::Init if self.is_leader() => {
+                let generic_qc = decision_handler.latest_prepare_qc_ref().cloned();
+
+                let (requests, digest) = request_aggr.take_pool_requests();
+
+                let decision_node = if let Some(generic_qc) = generic_qc {
+                    ChainedDecisionNode::create_leaf(
+                        self.sequence_number(),
+                        &generic_qc.decision_node().clone(),
+                        digest,
+                        requests,
+                        generic_qc,
+                    )
+                } else {
+                    ChainedDecisionNode::create_root(self.view(), digest, requests)
+                };
+
+                let _ = network.broadcast_signed(
+                    IronChainMessage::new(
+                        self.sequence_number(),
+                        IronChainMessageType::Proposal(ProposalMessage::new(decision_node)),
+                    ),
+                    self.view.quorum_members().iter().cloned(),
+                );
+
+                self.state = ChainedDecisionState::Prepare(0, false);
+                ChainedDecisionPollResult::ReceiveMsg
             }
             ChainedDecisionState::Finalized => ChainedDecisionPollResult::Decided,
             _ => {
@@ -158,9 +193,10 @@ where
             decision_handler.install_latest_prepare_qc(qc.clone());
         }
 
+        // Perform the generic as leader phase, as we are the leader of the next view
         let qc = self.decision_log.as_mut_next_leader().get_high_justify_qc();
 
-        match (qc, decision_handler.latest_locked_qc()) {
+        match (qc, decision_handler.latest_locked_qc_ref()) {
             (Some(qc), Some(latest_locked_qc))
                 if qc.justify().map_or(SeqNo::ZERO, Orderable::sequence_number)
                     > latest_locked_qc.sequence_number() =>
@@ -274,7 +310,7 @@ where
             decision_handler.install_latest_prepare_qc(qc.clone());
         }
 
-        let ProposalMessage { proposal } = proposal_message;
+        let proposal = proposal_message.into_parts();
 
         self.decision_node_digest = Some(proposal.decision_header().current_block_digest());
 
