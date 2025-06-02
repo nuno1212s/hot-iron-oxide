@@ -1,20 +1,19 @@
-use std::hash::Hash;
+use crate::view::View;
+use atlas_common::crypto::hash::Digest;
+use atlas_common::crypto::threshold_crypto::CombinedSignature;
+use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::message::StoredMessage;
+use getset::{CopyGetters, Getters};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
-use getset::{CopyGetters, Getters};
-use atlas_common::crypto::hash::Digest;
-use atlas_common::ordering::{Orderable, SeqNo};
 use std::fmt::{Debug, Formatter};
-use atlas_common::crypto::threshold_crypto::CombinedSignature;
-use atlas_communication::message::StoredMessage;
-use crate::view::View;
+use std::hash::Hash;
 
 /// The Trait which specifies all of the required methods for a quorum certificate
 pub trait TQuorumCertificate: Orderable + Clone {
     fn decision_node(&self) -> &DecisionNodeHeader;
-    
-    fn signature(&self) -> &CombinedSignature;
 
+    fn signature(&self) -> &CombinedSignature;
 }
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
@@ -59,8 +58,18 @@ impl DecisionNodeHeader {
         }
     }
 
-    fn new(view_no: SeqNo, previous_block: Option<Digest>, current_block_digest: Digest, contained_client_commands: usize) -> Self {
-        Self { view_no, previous_block, current_block_digest, contained_client_commands }
+    fn new(
+        view_no: SeqNo,
+        previous_block: Option<Digest>,
+        current_block_digest: Digest,
+        contained_client_commands: usize,
+    ) -> Self {
+        Self {
+            view_no,
+            previous_block,
+            current_block_digest,
+            contained_client_commands,
+        }
     }
 }
 
@@ -143,7 +152,7 @@ impl<D> DecisionNode<D> {
             true
         }
     }
-    
+
     pub(crate) fn into_commands(self) -> Vec<StoredMessage<D>> {
         self.client_commands
     }
@@ -187,16 +196,16 @@ impl<D> From<DecisionNode<D>> for (DecisionNodeHeader, Vec<StoredMessage<D>>) {
     }
 }
 
-#[derive(Getters)]
 pub struct DecisionHandler<QC> {
     latest_qc: Option<QC>,
-    #[getset(get = "pub")]
     latest_prepare_qc: Option<QC>,
-    #[getset(get = "pub")]
-    latest_locked_qc: Option<QC>
+    latest_locked_qc: Option<QC>,
 }
 
-impl<QC> DecisionHandler<QC> where QC: TQuorumCertificate {
+impl<QC> DecisionHandler<QC>
+where
+    QC: TQuorumCertificate,
+{
     pub fn safe_node<D>(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
         match (node.decision_header.previous_block, self.latest_qc()) {
             (Some(prev), Some(latest_qc)) => {
@@ -208,6 +217,18 @@ impl<QC> DecisionHandler<QC> where QC: TQuorumCertificate {
         }
     }
 
+    pub(crate) fn latest_qc_ref(&self) -> Option<&QC> {
+        self.latest_qc.as_ref()
+    }
+
+    pub(crate) fn latest_prepare_qc_ref(&self) -> Option<&QC> {
+        self.latest_prepare_qc.as_ref()
+    }
+
+    pub(crate) fn latest_locked_qc_ref(&self) -> Option<&QC> {
+        self.latest_locked_qc.as_ref()
+    }
+
     pub(crate) fn latest_qc(&self) -> Option<QC> {
         self.latest_qc.clone()
     }
@@ -215,16 +236,15 @@ impl<QC> DecisionHandler<QC> where QC: TQuorumCertificate {
     fn install_latest_qc(&mut self, qc: QC) {
         self.latest_qc = Some(qc);
     }
-    
+
     pub(crate) fn install_latest_prepare_qc(&mut self, qc: QC) {
         self.latest_prepare_qc = Some(qc);
     }
-    
+
     pub(crate) fn install_latest_locked_qc(&mut self, qc: QC) {
         self.latest_locked_qc = Some(qc);
     }
 }
-
 
 impl<QC> Default for DecisionHandler<QC> {
     fn default() -> Self {

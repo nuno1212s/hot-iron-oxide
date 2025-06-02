@@ -19,7 +19,8 @@ pub struct View {
 }
 
 impl View {
-    #[must_use] pub fn new(seq: SeqNo, members: Vec<NodeId>, leader: NodeId, f: usize) -> Self {
+    #[must_use]
+    pub fn new(seq: SeqNo, members: Vec<NodeId>, leader: NodeId, f: usize) -> Self {
         Self {
             seq,
             members,
@@ -28,7 +29,8 @@ impl View {
         }
     }
 
-    #[must_use] pub fn new_from_quorum(seq_no: SeqNo, members: Vec<NodeId>) -> Self {
+    #[must_use]
+    pub fn new_from_quorum(seq_no: SeqNo, members: Vec<NodeId>) -> Self {
         Self::new_from_quorum_with_leader_allocator::<RoundRobinLA>(seq_no, members)
     }
 
@@ -44,13 +46,15 @@ impl View {
 
     /// Makes a clone of the current view, but with a new sequence number
     /// which is passed as an argument
-    #[must_use] pub fn with_new_seq(&self, seq: SeqNo) -> Self {
+    #[must_use]
+    pub fn with_new_seq(&self, seq: SeqNo) -> Self {
         Self::new_from_quorum(seq, self.members.clone())
     }
-    
+
     /// Makes a clone of the current view with an incremented sequence number
     /// Does not modify the currently existing view object instance
-    #[must_use] pub fn next_view(&self) -> Self {
+    #[must_use]
+    pub fn next_view(&self) -> Self {
         Self::new_from_quorum(self.seq.next(), self.members.clone())
     }
 }

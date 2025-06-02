@@ -1,5 +1,6 @@
-use crate::protocol::{QCType, QC};
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 use crate::protocol::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalType};
+use crate::protocol::{QCType, QC};
 use atlas_common::collections::HashMap;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
@@ -8,7 +9,6 @@ use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Getters)]
@@ -25,7 +25,6 @@ impl<D> Proof<D>
 where
     D: Clone,
 {
-    
     /// # [Errors]
     /// Returns an error if the prepare proposal is not found within
     /// the stored messages.
@@ -69,7 +68,7 @@ where
         if *decision_node.decision_header() != decision_header {
             return Err(ProofFromStorageError::MissMatchingDecisionHeader);
         }
-        
+
         Ok(Self {
             decision_node,
             qcs,
@@ -77,7 +76,8 @@ where
         })
     }
 
-    #[must_use] pub fn new(
+    #[must_use]
+    pub fn new(
         decision_node: DecisionNode<D>,
         qcs: HashMap<QCType, QC>,
         messages: Vec<StoredMessage<HotFeOxMsg<D>>>,

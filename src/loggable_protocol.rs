@@ -1,7 +1,7 @@
 use crate::crypto::CryptoInformationProvider;
-use crate::protocol::proof::Proof;
 use crate::protocol::messages::serialize::HotIronOxSer;
 use crate::protocol::messages::{HotFeOxMsgType, ProposalType, VoteType};
+use crate::protocol::proof::Proof;
 use crate::HotIron;
 use crate::SerMsg;
 use atlas_common::ordering::Orderable;
@@ -84,8 +84,11 @@ where
         additional_data: Vec<DecisionAD<RQ, HotIronOxSer<RQ>>>,
         messages: Vec<StoredMessage<ProtocolMessage<RQ, HotIronOxSer<RQ>>>>,
     ) -> atlas_common::error::Result<PProof<RQ, HotIronOxSer<RQ>, HotIronOxSer<RQ>>> {
-
-        Ok(Proof::new_from_storage(metadata, additional_data, messages)?)
+        Ok(Proof::new_from_storage(
+            metadata,
+            additional_data,
+            messages,
+        )?)
     }
 
     fn init_proof_from_scm(
@@ -93,10 +96,16 @@ where
         additional_data: Vec<DecisionAD<RQ, HotIronOxSer<RQ>>>,
         messages: Vec<ShareableConsensusMessage<RQ, HotIronOxSer<RQ>>>,
     ) -> atlas_common::error::Result<PProof<RQ, HotIronOxSer<RQ>, HotIronOxSer<RQ>>> {
-        let cloned_messages = messages.iter()
-            .map(|msg| (**msg).clone()).collect::<Vec<_>>();
-        
-        Ok(Proof::new_from_storage(metadata, additional_data, cloned_messages)?)
+        let cloned_messages = messages
+            .iter()
+            .map(|msg| (**msg).clone())
+            .collect::<Vec<_>>();
+
+        Ok(Proof::new_from_storage(
+            metadata,
+            additional_data,
+            cloned_messages,
+        )?)
     }
 
     fn decompose_proof(

@@ -1,8 +1,11 @@
 use crate::crypto::{
     combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner,
 };
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
+use crate::protocol::messages::{
+    ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType,
+};
 use crate::protocol::{QCType, QC};
-use crate::protocol::messages::{ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType};
 use crate::view::View;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
@@ -11,7 +14,6 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use getset::{Getters, MutGetters, Setters};
 use std::error::Error;
 use thiserror::Error;
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 
 /// The log of votes for a given decision instance
 pub enum MsgDecisionLog {
@@ -22,7 +24,7 @@ pub enum MsgDecisionLog {
 #[derive(Setters, Getters, MutGetters)]
 pub struct DecisionLog<D> {
     #[getset(get = "pub(super)", set = "pub(super)")]
-    current_proposal: Option<DecisionNode<D>>
+    current_proposal: Option<DecisionNode<D>>,
 }
 
 pub struct VoteStore {
@@ -51,11 +53,9 @@ pub struct MsgReplicaDecisionLog {
 }
 
 impl<RQ> DecisionLog<RQ> {
-    
     pub fn into_decision_node(self) -> Option<DecisionNode<RQ>> {
         self.current_proposal
     }
-    
 }
 
 impl MsgDecisionLog {
@@ -161,10 +161,16 @@ impl MsgLeaderDecisionLog {
         let (vote_type_msg, signature) = vote.into_inner();
 
         match vote_type_msg {
-            VoteType::NewView(_) => Ok(self.new_view_store().accept_new_view(sender, VoteMessage::new(vote_type_msg, signature))?),
+            VoteType::NewView(_) => Ok(self
+                .new_view_store()
+                .accept_new_view(sender, VoteMessage::new(vote_type_msg, signature))?),
             VoteType::PrepareVote(vote) => Ok(self.prepare_qc.accept_vote(sender, vote, signature)),
-            VoteType::PreCommitVote(vote) => Ok(self.pre_commit_qc.accept_vote(sender, vote, signature)),
-            VoteType::CommitVote(commit_vote) => Ok(self.commit_qc.accept_vote(sender, commit_vote, signature)),
+            VoteType::PreCommitVote(vote) => {
+                Ok(self.pre_commit_qc.accept_vote(sender, vote, signature))
+            }
+            VoteType::CommitVote(commit_vote) => {
+                Ok(self.commit_qc.accept_vote(sender, commit_vote, signature))
+            }
         }
     }
 

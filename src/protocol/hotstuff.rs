@@ -1,9 +1,12 @@
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
 use crate::decision_tree::{DecisionHandler, DecisionNodeHeader};
-use crate::protocol::decision::{DecisionError, DecisionFinalizationResult, DecisionPollResult, DecisionResult, HSDecision};
+use crate::protocol::decision::{
+    DecisionError, DecisionFinalizationResult, DecisionPollResult, DecisionResult, HSDecision,
+};
 use crate::protocol::messages::serialize::HotIronOxSer;
 use crate::protocol::messages::HotFeOxMsg;
 use crate::protocol::QC;
+use crate::req_aggr::RequestAggr;
 use crate::view::View;
 use crate::{HotIronDecision, HotIronPollResult, HotIronResult};
 use atlas_common::maybe_vec::MaybeVec;
@@ -12,9 +15,7 @@ use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
-use atlas_core::ordering_protocol::{
-    DecisionsAhead, ShareableMessage,
-};
+use atlas_core::ordering_protocol::{DecisionsAhead, ShareableMessage};
 use atlas_core::request_pre_processing::BatchOutput;
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use either::Either;
@@ -24,7 +25,6 @@ use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, instrument, warn};
-use crate::req_aggr::RequestAggr;
 
 pub(crate) struct HotStuffProtocol<RQ, NT>
 where
@@ -120,7 +120,7 @@ where
     fn index(&self, seq_no: SeqNo) -> Either<InvalidSeqNo, usize> {
         seq_no.index(self.current_view.sequence_number())
     }
-    
+
     pub fn handle_next_view_for_decision(&mut self, seq_no: SeqNo) {
         let index = match self.index(seq_no) {
             Either::Right(i) => i,
@@ -130,10 +130,14 @@ where
         if index < self.decisions.len() {
             self.decisions.get_mut(index).unwrap().next_view_received();
         } else {
-            warn!("Ignoring next view message for seq no {:?} as we are already in seq no {:?}", seq_no, self.sequence_number());
+            warn!(
+                "Ignoring next view message for seq no {:?} as we are already in seq no {:?}",
+                seq_no,
+                self.sequence_number()
+            );
         }
     }
-    
+
     pub fn can_finalize(&self) -> bool {
         for item in &self.decisions {
             match item.can_be_finalized() {
@@ -142,7 +146,7 @@ where
                 DecisionFinalizationResult::NotFinal => return false,
             }
         }
-        
+
         false
     }
 

@@ -1,15 +1,15 @@
 pub mod serialize;
 
-use enum_map::Enum;
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 use crate::protocol::QC;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
+use enum_map::Enum;
 use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use strum::EnumDiscriminants;
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, EnumDiscriminants)]
@@ -69,7 +69,8 @@ impl<D> Orderable for HotFeOxMsg<D> {
 }
 
 impl<D> HotFeOxMsg<D> {
-    #[must_use] pub fn new(view: SeqNo, message: HotFeOxMsgType<D>) -> Self {
+    #[must_use]
+    pub fn new(view: SeqNo, message: HotFeOxMsgType<D>) -> Self {
         Self {
             curr_view: view,
             message,
@@ -84,7 +85,8 @@ impl<D> From<HotFeOxMsg<D>> for HotFeOxMsgType<D> {
 }
 
 impl<D> ProposalMessage<D> {
-    #[must_use] pub fn new(proposal_type: ProposalType<D>) -> Self {
+    #[must_use]
+    pub fn new(proposal_type: ProposalType<D>) -> Self {
         Self { proposal_type }
     }
 }
@@ -96,7 +98,8 @@ impl<D> From<ProposalMessage<D>> for ProposalType<D> {
 }
 
 impl VoteMessage {
-    #[must_use] pub fn new(vote_type: VoteType, sig: PartialSignature) -> Self {
+    #[must_use]
+    pub fn new(vote_type: VoteType, sig: PartialSignature) -> Self {
         Self {
             vote_type,
             signature: sig,

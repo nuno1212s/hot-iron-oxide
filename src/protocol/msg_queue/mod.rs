@@ -1,5 +1,5 @@
-use crate::protocol::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalTypes, VoteTypes};
 use crate::protocol::decision::DecisionState;
+use crate::protocol::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalTypes, VoteTypes};
 use atlas_core::ordering_protocol::ShareableMessage;
 use enum_map::EnumMap;
 use std::collections::VecDeque;
@@ -11,7 +11,6 @@ pub struct HotStuffTBOQueue<D> {
 }
 
 impl<D> HotStuffTBOQueue<D> {
-
     pub fn queue_message(&mut self, message: ShareableMessage<HotFeOxMsg<D>>) {
         self.get_queue = true;
 
@@ -28,42 +27,65 @@ impl<D> HotStuffTBOQueue<D> {
     pub fn should_poll(&self) -> bool {
         self.get_queue
     }
-    
-    fn get_message_for_type(&mut self, is_leader: bool, proposal_types: ProposalTypes, vote_types: VoteTypes) -> Option<ShareableMessage<HotFeOxMsg<D>>> {
+
+    fn get_message_for_type(
+        &mut self,
+        is_leader: bool,
+        proposal_types: ProposalTypes,
+        vote_types: VoteTypes,
+    ) -> Option<ShareableMessage<HotFeOxMsg<D>>> {
         if is_leader {
             self.proposal_queue(proposal_types)
                 .pop_front()
                 .or_else(|| self.vote_queue(vote_types).pop_front())
         } else {
-            self.vote_queue(vote_types)
-                .pop_front()
+            self.vote_queue(vote_types).pop_front()
         }
     }
-    
-    pub fn get_message_for(&mut self, is_leader: bool, decision_state: &DecisionState) -> Option<ShareableMessage<HotFeOxMsg<D>>> {
-        
+
+    pub fn get_message_for(
+        &mut self,
+        is_leader: bool,
+        decision_state: &DecisionState,
+    ) -> Option<ShareableMessage<HotFeOxMsg<D>>> {
         let decision_result = match decision_state {
-            DecisionState::Prepare(_, _) => self.get_message_for_type(is_leader, ProposalTypes::Prepare, VoteTypes::NewView),
-            DecisionState::PreCommit(_, _) => self.get_message_for_type(is_leader, ProposalTypes::PreCommit, VoteTypes::PrepareVote),
-            DecisionState::Commit(_, _) => self.get_message_for_type(is_leader, ProposalTypes::Commit, VoteTypes::PreCommitVote),
-            DecisionState::Decide(_, _) => self.get_message_for_type(is_leader, ProposalTypes::Decide, VoteTypes::NewView),
-            _ => {
-                None
+            DecisionState::Prepare(_, _) => {
+                self.get_message_for_type(is_leader, ProposalTypes::Prepare, VoteTypes::NewView)
             }
+            DecisionState::PreCommit(_, _) => self.get_message_for_type(
+                is_leader,
+                ProposalTypes::PreCommit,
+                VoteTypes::PrepareVote,
+            ),
+            DecisionState::Commit(_, _) => self.get_message_for_type(
+                is_leader,
+                ProposalTypes::Commit,
+                VoteTypes::PreCommitVote,
+            ),
+            DecisionState::Decide(_, _) => {
+                self.get_message_for_type(is_leader, ProposalTypes::Decide, VoteTypes::NewView)
+            }
+            _ => None,
         };
-        
+
         if decision_result.is_none() {
             self.get_queue = false;
         }
-        
+
         decision_result
     }
-    
-    fn proposal_queue(&mut self, proposal_type: ProposalTypes) -> &mut VecDeque<ShareableMessage<HotFeOxMsg<D>>> {
+
+    fn proposal_queue(
+        &mut self,
+        proposal_type: ProposalTypes,
+    ) -> &mut VecDeque<ShareableMessage<HotFeOxMsg<D>>> {
         &mut self.proposal_messages[proposal_type]
     }
 
-    fn vote_queue(&mut self, vote_type: VoteTypes) -> &mut VecDeque<ShareableMessage<HotFeOxMsg<D>>> {
+    fn vote_queue(
+        &mut self,
+        vote_type: VoteTypes,
+    ) -> &mut VecDeque<ShareableMessage<HotFeOxMsg<D>>> {
         &mut self.vote_messages[vote_type]
     }
 }

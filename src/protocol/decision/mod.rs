@@ -1,11 +1,7 @@
 mod test;
 
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
-use crate::protocol::messages::serialize::HotIronOxSer;
-use crate::protocol::messages::{
-    HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
-    VoteType, VoteTypes,
-};
+use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
 use crate::metric::{
     ConsensusDecisionMetric, SIGNATURE_PROPOSAL_LATENCY_ID, SIGNATURE_VOTE_LATENCY_ID,
 };
@@ -13,8 +9,14 @@ use crate::protocol::log::{
     DecisionLog, MsgDecisionLog, MsgLeaderDecisionLog, MsgReplicaDecisionLog, NewViewAcceptError,
     NewViewGenerateError, VoteAcceptError, VoteStoreError,
 };
+use crate::protocol::messages::serialize::HotIronOxSer;
+use crate::protocol::messages::{
+    HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
+    VoteType, VoteTypes,
+};
 use crate::protocol::msg_queue::HotStuffTBOQueue;
 use crate::protocol::{HotIronDecisionHandler, QC};
+use crate::req_aggr::ReqAggregator;
 use crate::view::View;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -32,8 +34,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{error, info, trace, warn};
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
-use crate::req_aggr::ReqAggregator;
 
 #[derive(Debug)]
 pub enum DecisionState {

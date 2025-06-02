@@ -1,3 +1,4 @@
+use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertificate};
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
 use getset::{CopyGetters, Getters};
@@ -6,14 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use strum::EnumCount;
-use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertificate};
 
 pub(crate) mod decision;
 pub(crate) mod hotstuff;
 mod log;
+pub mod messages;
 mod msg_queue;
 pub mod proof;
-pub mod messages;
 
 pub type HotIronDecisionHandler = DecisionHandler<QC>;
 
@@ -73,7 +73,6 @@ impl Orderable for QC {
     }
 }
 
-
 impl Debug for QC {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -83,4 +82,3 @@ impl Debug for QC {
         )
     }
 }
-

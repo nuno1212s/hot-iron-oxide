@@ -2,8 +2,6 @@ use crate::config::HotIronInitConfig;
 use crate::crypto::{AtlasTHCryptoProvider, CryptoInformationProvider};
 use crate::protocol::hotstuff::HotStuffProtocol;
 use crate::protocol::QC;
-use protocol::messages::serialize::HotIronOxSer;
-use protocol::messages::HotFeOxMsg;
 use crate::view::View;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
@@ -19,21 +17,23 @@ use atlas_core::ordering_protocol::{
     ProtocolMessage, ShareableConsensusMessage,
 };
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutableMod};
-use lazy_static::lazy_static;
-use std::sync::{Arc, LazyLock};
-use tracing::trace;
 use atlas_core::timeouts::TimeOutable;
 use decision_tree::DecisionNodeHeader;
+use lazy_static::lazy_static;
+use protocol::messages::serialize::HotIronOxSer;
+use protocol::messages::HotFeOxMsg;
+use std::sync::{Arc, LazyLock};
+use tracing::trace;
 
+pub mod chained;
 pub mod config;
 pub mod crypto;
-pub mod protocol;
+mod decision_tree;
 mod loggable_protocol;
 pub mod metric;
-pub mod view;
-pub mod chained;
-mod decision_tree;
+pub mod protocol;
 mod req_aggr;
+pub mod view;
 
 static MOD_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("HOT-IRON"));
 
@@ -120,16 +120,17 @@ where
         &mut self,
         timeout: Vec<ModTimeout>,
     ) -> Result<OPExResult<RQ, HotIronOxSer<RQ>>> {
-        
-        timeout.iter()
+        timeout
+            .iter()
             .map(ModTimeout::extra_info)
             .map(|info| info.map(TimeOutable::as_any))
             .for_each(|any| {
                 if let Some(seq_no) = any.as_ref().and_then(|any| any.downcast_ref::<SeqNo>()) {
-                    self.hot_stuff_protocol.handle_next_view_for_decision(*seq_no);
+                    self.hot_stuff_protocol
+                        .handle_next_view_for_decision(*seq_no);
                 }
             });
-        
+
         Ok(OPExecResult::MessageProcessedNoUpdate)
     }
 }

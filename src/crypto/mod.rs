@@ -8,9 +8,9 @@ use atlas_common::crypto::threshold_crypto::{
 };
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
+use atlas_common::serialization_helper::SerMsg;
 use getset::Getters;
 use std::error::Error;
-use atlas_common::serialization_helper::SerMsg;
 use thiserror::Error;
 
 /// Threshold crypto related information storage
@@ -85,7 +85,7 @@ pub fn get_partial_signature_for_message<CR, CP, VT>(
 where
     CR: CryptoInformationProvider,
     CP: CryptoPartialSigProvider,
-    VT: SerMsg
+    VT: SerMsg,
 {
     let bytes = serialize_vote_message(view, vote_msg);
 
@@ -184,7 +184,8 @@ impl CryptoInformationProvider for QuorumInfo {
 }
 
 impl QuorumInfo {
-    #[must_use] pub fn initialize(f: usize) -> Vec<Self> {
+    #[must_use]
+    pub fn initialize(f: usize) -> Vec<Self> {
         let key_set = PrivateKeySet::gen_random(2 * f);
 
         let n = 3 * f + 1;
@@ -205,13 +206,17 @@ impl QuorumInfo {
             })
             .collect()
     }
-    
-    #[must_use] pub fn new(private_key_part: PrivateKeyPart, public_key_part: PublicKeyPart, public_key_set: PublicKeySet) -> Self {
+
+    #[must_use]
+    pub fn new(
+        private_key_part: PrivateKeyPart,
+        public_key_part: PublicKeyPart,
+        public_key_set: PublicKeySet,
+    ) -> Self {
         Self {
             our_priv_key: private_key_part,
             our_pub_key: public_key_part,
             pub_key: public_key_set,
         }
     }
-    
 }

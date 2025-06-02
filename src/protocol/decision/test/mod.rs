@@ -3,14 +3,16 @@ mod decision_test {
     use crate::crypto::{
         get_partial_signature_for_message, AtlasTHCryptoProvider, CryptoInformationProvider,
     };
+    use crate::decision_tree::{DecisionHandler, DecisionNode};
     use crate::protocol::decision::{DecisionResult, DecisionState, HSDecision};
     use crate::protocol::log::MsgLeaderDecisionLog;
-    use crate::protocol::{HotIronDecisionHandler, QC};
     use crate::protocol::messages::serialize::HotIronOxSer;
     use crate::protocol::messages::{
         HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
         VoteType,
     };
+    use crate::protocol::{HotIronDecisionHandler, QC};
+    use crate::req_aggr::ReqAggregator;
     use crate::view::View;
     use anyhow::anyhow;
     use atlas_common::collections::HashMap;
@@ -37,8 +39,6 @@ mod decision_test {
     use serde::{Deserialize, Serialize};
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
-    use crate::decision_tree::{DecisionHandler, DecisionNode};
-    use crate::req_aggr::ReqAggregator;
 
     #[derive(Clone, Serialize, Deserialize)]
     struct BlankProtocol;
@@ -415,8 +415,9 @@ mod decision_test {
         seq_no: SeqNo,
         vote: VoteType,
     ) -> HotFeOxMsg<RQ> {
-        let msg_signature =
-            get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(crypto, seq_no, &vote);
+        let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(
+            crypto, seq_no, &vote,
+        );
 
         HotFeOxMsg::new(
             seq_no,
@@ -484,7 +485,7 @@ mod decision_test {
         decision_handler: &mut HotIronDecisionHandler,
     ) -> Vec<DecisionResult<BlankProtocol>> {
         let mut results = Vec::new();
-        
+
         let mut stored_messages = scenario
             .node
             .pending_own_messages
@@ -493,7 +494,7 @@ mod decision_test {
 
         while let Some(message) = stored_messages.pop_front() {
             let message = Arc::new(message);
-            
+
             let target = message.header().to();
 
             let decision_result = scenario
@@ -638,10 +639,11 @@ mod decision_test {
             scenario.decision.current_state,
             DecisionState::Prepare(true, 3)
         ));
-        
+
         // Process the proposal message
-        let results = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+        let results =
+            process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+
         assert_eq!(
             1,
             results
@@ -651,7 +653,7 @@ mod decision_test {
                 })
                 .count()
         );
-        
+
         assert!(matches!(
             scenario.decision.current_state,
             DecisionState::PreCommit(false, 0)
@@ -726,7 +728,7 @@ mod decision_test {
         let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
         let results = prepare_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         assert_eq!(
@@ -738,14 +740,15 @@ mod decision_test {
                 })
                 .count()
         );
-        
+
         assert!(matches!(
             scenario.decision.current_state,
             DecisionState::PreCommit(true, 3)
         ));
-        
-        let results = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
+        let results =
+            process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+
         assert_eq!(
             1,
             results
@@ -828,11 +831,11 @@ mod decision_test {
             .set_current_state(DecisionState::Prepare(false, 0));
 
         let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
         let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
         let _ = prepare_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
         let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         let results = commit_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
@@ -851,9 +854,10 @@ mod decision_test {
             scenario.decision.current_state,
             DecisionState::Commit(true, 3)
         ));
-        
-        let results = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
+        let results =
+            process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+
         assert_eq!(
             1,
             results
@@ -863,7 +867,7 @@ mod decision_test {
                 })
                 .count()
         );
-        
+
         assert!(matches!(
             scenario.decision.current_state,
             DecisionState::Decide(..)
@@ -936,15 +940,15 @@ mod decision_test {
             .set_current_state(DecisionState::Prepare(false, 0));
 
         let _ = new_view_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
         let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         let _ = prepare_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
         let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         let _ = commit_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
         let _ = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
 
         let results = decide_decision_messages(&mut scenario, &cryptos_for, &mut decision_handler);
@@ -963,19 +967,18 @@ mod decision_test {
             scenario.decision.current_state,
             DecisionState::Decide(true, 3)
         ));
-        
-        let results = process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
-        
+
+        let results =
+            process_pending_node_messages(&mut scenario, &cryptos_for, &mut decision_handler);
+
         assert_eq!(
             1,
             results
                 .iter()
-                .filter(|decision| {
-                    matches!(decision, DecisionResult::Decided(..))
-                })
+                .filter(|decision| { matches!(decision, DecisionResult::Decided(..)) })
                 .count()
         );
-        
+
         assert!(matches!(
             scenario.decision.current_state,
             DecisionState::Finally
@@ -1033,9 +1036,10 @@ mod decision_test {
 
             let vote = VoteType::NewView(None);
 
-            let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(
-                &**crypto, sequence, &vote,
-            );
+            let msg_signature =
+                get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(
+                    &**crypto, sequence, &vote,
+                );
 
             let msg = VoteMessage::new(vote, msg_signature);
 
@@ -1121,9 +1125,10 @@ mod decision_test {
 
                 let vote = VoteType::PrepareVote(*decision.decision_header());
 
-                let msg_signature = get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(
-                    &**crypto, sequence, &vote,
-                );
+                let msg_signature =
+                    get_partial_signature_for_message::<_, AtlasTHCryptoProvider, VoteType>(
+                        &**crypto, sequence, &vote,
+                    );
 
                 let msg = VoteMessage::new(vote, msg_signature);
 

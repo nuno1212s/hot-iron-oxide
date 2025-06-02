@@ -17,14 +17,14 @@ atlas-core = { path = "../Atlas/Atlas-Core" }
 atlas-communication = { path = "../Atlas/Atlas-Communication" }
 atlas-metrics = { path = "../Atlas/Atlas-Metrics" }
 
-getset = "*"
+getset = { version = "0" }
 anyhow = "1.0"
 thiserror = "2"
-lazy_static = "*"
+lazy_static = "1"
 
-tracing = "*"
-either = "*"
-serde = { version = "*", features = ["derive"] }
+tracing = "0"
+either = "1"
+serde = { version = "1", features = ["derive"] }
 bincode = {version = "2", features = ["default"]}
 derive_more = { version = "*" , features = ["display"]}
 
