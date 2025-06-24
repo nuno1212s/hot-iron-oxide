@@ -24,7 +24,7 @@ use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock};
-use tracing::error;
+use tracing::{debug, error, info};
 
 mod chained_decision_tree;
 mod loggable_protocol;
@@ -67,7 +67,7 @@ where
     quorum_information: Arc<CR>,
     is_executing: bool,
     decision_handler: ChainedDecisionHandler,
-    protocol: ChainedHotStuffProtocol<RQ, RequestAggr<RQ>>,
+    protocol: ChainedHotStuffProtocol<RQ>,
 }
 
 impl<RQ, NT, CR> IronChain<RQ, NT, CR>
@@ -165,6 +165,8 @@ where
     }
 
     fn poll(&mut self) -> atlas_common::error::Result<OPResult<RQ, Self::Serialization>> {
+        info!("Polling IronChain protocol...");
+        
         self.protocol
             .poll(&self.network_node, &self.decision_handler)
             .map_err(From::from)
@@ -174,6 +176,8 @@ where
         &mut self,
         message: ShareableConsensusMessage<RQ, Self::Serialization>,
     ) -> atlas_common::error::Result<OPExResult<RQ, Self::Serialization>> {
+        info!("Processing message: {:?}", message);
+        
         let result = self
             .protocol
             .process_message::<CR, AtlasTHCryptoProvider, NT>(
@@ -182,6 +186,27 @@ where
                 &mut self.decision_handler,
                 message,
             )?;
+        
+        match &result {
+            IronChainResult::MessageQueued => {
+                info!("Message queued in IronChain protocol.");
+            }
+            IronChainResult::MessageDropped => {
+                info!("Message dropped in IronChain protocol.");
+            }
+            IronChainResult::MessageProcessedNoUpdate => {
+                info!("Message processed with no update in IronChain protocol.");
+            }
+            IronChainResult::ProgressedDecision(_, _) => {
+                info!("Decision progressed in IronChain protocol.");
+            }
+            IronChainResult::QuorumJoined(_, _, _) => {
+                info!("Quorum joined in IronChain protocol.");
+            }
+            IronChainResult::RunCst => {
+                info!("Running consensus in IronChain protocol.");
+            }
+        }
 
         Ok(result)
     }

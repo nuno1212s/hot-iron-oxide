@@ -15,7 +15,7 @@ use crate::chained::{
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
 use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertificate};
 use crate::protocol::hotstuff::Signals;
-use crate::req_aggr::ReqAggregator;
+use crate::req_aggr::{ReqAggregator, RequestAggr};
 use crate::view::View;
 use crate::HotIronPollResult;
 use atlas_common::crypto::hash::Digest;
@@ -32,48 +32,58 @@ use atlas_core::ordering_protocol::{
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use either::Either;
 use std::collections::VecDeque;
+use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
+use crate::chained::protocol::log::NewViewGenerateError;
 
 const PROTOCOL_PHASES: u8 = 4;
 const PROTOCOL_PHASES_USIZE: usize = PROTOCOL_PHASES as usize;
 
-pub(crate) struct ChainedHotStuffProtocol<RQ, RQA> {
+pub(crate) struct ChainedHotStuffProtocol<RQ> {
     node_id: NodeId,
-    request_aggr: Arc<RQA>,
+    request_aggr: Arc<RequestAggr<RQ>>,
     timeouts: TimeoutModHandle,
     decision_list: VecDeque<ChainedDecision<RQ>>,
-    signal: Signals,
+    signals: Signals,
     pending_nodes: PendingDecisionNodes<RQ>,
     curr_view: View,
     last_decided_view: Option<View>,
 }
 
-impl<RQ, RQA> Orderable for ChainedHotStuffProtocol<RQ, RQA> {
+impl<RQ> Orderable for ChainedHotStuffProtocol<RQ> {
     fn sequence_number(&self) -> SeqNo {
         self.curr_view.sequence_number()
     }
 }
 
-impl<RQ, RQA> ChainedHotStuffProtocol<RQ, RQA>
+impl<RQ> ChainedHotStuffProtocol<RQ>
 where
     RQ: SerMsg,
-    RQA: ReqAggregator<RQ>,
 {
     #[must_use]
     pub fn new(
         node_id: NodeId,
-        rq_aggr: Arc<RQA>,
+        rq_aggr: Arc<RequestAggr<RQ>>,
         timeouts: TimeoutModHandle,
         mut curr_view: View,
     ) -> Self {
         let mut decision_list = VecDeque::with_capacity(PROTOCOL_PHASES as usize);
 
-        for _ in 0..PROTOCOL_PHASES {
+        let mut signals = Signals::default();
+        
+        let first_view = curr_view.clone();
+        signals.push_signalled(curr_view.sequence_number());
+
+        for i in 0..PROTOCOL_PHASES {
             let next_view = curr_view.next_view();
 
-            let chained_decision = ChainedDecision::new(curr_view, node_id);
+            let chained_decision = if i == 0 {
+                ChainedDecision::new_first_view(curr_view, node_id)
+            } else {
+                ChainedDecision::new(curr_view, node_id)
+            };
 
             decision_list.push_back(chained_decision);
 
@@ -85,9 +95,9 @@ where
             request_aggr: rq_aggr,
             timeouts,
             decision_list,
-            signal: Signals::default(),
+            signals,
             pending_nodes: PendingDecisionNodes::default(),
-            curr_view,
+            curr_view: first_view,
             last_decided_view: None,
         }
     }
@@ -111,25 +121,29 @@ where
                     PROTOCOL_PHASES_USIZE
                 } else {
                     // Remove all decisions that are before the new view
-                    (0..index).for_each(|i| {
+                    for _ in 0..index {
                         self.decision_list.pop_front();
-                    });
+                    }
 
                     index
                 };
 
                 let mut current_view = view.clone();
 
-                for _ in 0..phases_to_create {
-                    let chained_decision = ChainedDecision::new(current_view.clone(), self.node_id);
+                for i in 0..phases_to_create {
+                    let chained_decision = if i == 0 {
+                        ChainedDecision::new_first_view(current_view.clone(), self.node_id)
+                    } else {
+                        ChainedDecision::new(current_view.clone(), self.node_id)
+                    };
 
                     self.decision_list.push_back(chained_decision);
 
                     current_view = current_view.next_view();
                 }
-                
-                self.signal.clear();
-                self.signal.push_signalled(view.sequence_number());
+
+                self.signals.clear();
+                self.signals.push_signalled(view.sequence_number());
             }
             Either::Left(_) => {
                 return Err(InstallViewError::ViewInPast(view, self.curr_view.clone()))
@@ -149,7 +163,7 @@ where
         RQ: SessionBased,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
     {
-        while let Some(seq) = self.signal.pop_signalled() {
+        while let Some(seq) = self.signals.pop_signalled() {
             let poll_result = {
                 let rq_aggr = self.request_aggr.clone();
 
@@ -166,7 +180,7 @@ where
                     return Ok(IronChainPollResult::ReceiveMsg)
                 }
                 ChainedDecisionPollResult::Exec(message) => {
-                    self.signal.push_signalled(seq);
+                    self.signals.push_signalled(seq);
 
                     return Ok(IronChainPollResult::Exec(message));
                 }
@@ -222,7 +236,7 @@ where
                 .queue_message(message);
 
             // Signal that we are ready to receive messages
-            self.signal.push_signalled(message_seq);
+            self.signals.push_signalled(message_seq);
         }
     }
 
@@ -232,7 +246,7 @@ where
         network: &Arc<NT>,
         decision_handler: &mut ChainedDecisionHandler,
         message: ShareableMessage<IronChainMessage<RQ>>,
-    ) -> Result<IronChainResult<RQ>, IronChainProcessError>
+    ) -> Result<IronChainResult<RQ>, IronChainProcessError<CP::CombinationError>>
     where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
@@ -244,17 +258,24 @@ where
             .index(self.curr_view.sequence_number())
         {
             Either::Right(index) => index,
-            Either::Left(_) => return Ok(IronChainResult::MessageDropped),
+            Either::Left(_) => {
+                warn!("Received message {:?} from {:?} in past view {:?}, ignoring",
+                    message.message(),
+                    message.header().from(),
+                    self.curr_view.sequence_number()
+                );
+                
+                return Ok(IronChainResult::MessageDropped);
+            }
         };
 
         let Some(decision) = self.decision_list.get_mut(decision_index) else {
             //TODO: Queue message
-
-            return Ok(IronChainResult::MessageQueued);
+            todo!("Queue message for later processing");
         };
 
         let result =
-            decision.process_message::<CR, CP, NT>(decision_handler, crypto, network, message);
+            decision.process_message::<CR, CP, NT>(&self.request_aggr, decision_handler, crypto, network, message)?;
 
         match result {
             ChainedDecisionResult::ProposalGenerated(proposal_header, message) => {
@@ -269,7 +290,12 @@ where
                 ))
             }
             ChainedDecisionResult::VoteGenerated(node, message) => {
-                self.handle_vote_generated(decision_index, node, message)?
+                self.handle_vote_generated(decision_index, node, message)
+            }
+            ChainedDecisionResult::MessageQueued => {
+                self.signals.push_signalled(decision.sequence_number());
+
+                Ok(IronChainResult::MessageQueued)
             }
             ChainedDecisionResult::MessageProcessed(_) => {
                 Ok(IronChainResult::MessageProcessedNoUpdate)
@@ -279,14 +305,15 @@ where
         }
     }
 
-    fn handle_vote_generated(
+    fn handle_vote_generated<CS>(
         &mut self,
         decision_index: usize,
         node: ChainedDecisionNode<RQ>,
         message: ShareableMessage<IronChainMessage<RQ>>,
-    ) -> Result<Result<IronChainResult<RQ>, IronChainProcessError>, IronChainProcessError>
+    ) -> Result<IronChainResult<RQ>,  IronChainProcessError<CS>>
     where
         RQ: SessionBased,
+        CS: Error
     {
         let decision = self
             .decision_list
@@ -315,15 +342,15 @@ where
 
             let vec = MaybeVec::from_many(vec);
 
-            Ok(IronChainResult::ProgressedDecision(
+            IronChainResult::ProgressedDecision(
                 DecisionsAhead::Ignore,
                 vec,
-            ))
+            )
         } else {
-            Ok(IronChainResult::ProgressedDecision(
+            IronChainResult::ProgressedDecision(
                 DecisionsAhead::Ignore,
                 MaybeVec::from_one(decision_information),
-            ))
+            )
         })
     }
 
@@ -459,11 +486,13 @@ where
 }
 
 #[derive(Debug, Clone, Error)]
-pub enum IronChainProcessError {
+pub enum IronChainProcessError<CS: Error> {
     #[error("Failed while processing chain {0:?}")]
     ProcessChain(#[from] ChainConstructionError),
     #[error("Failed to finalize decisions {0:?}")]
     FinalizeDecisions(#[from] FinalizeDecisionsError),
+    #[error("")]
+    NewViewError(#[from] NewViewGenerateError<CS>),
     #[error("Failed to get decision")]
     GetDecision(usize),
 }

@@ -1,14 +1,13 @@
 use crate::chained::chained_decision_tree::ChainedDecisionNode;
 use crate::chained::messages::serialize::IronChainSer;
-use crate::chained::messages::{IronChainMessage, IronChainMessageType, ProposalMessage};
+use crate::chained::messages::{IronChainMessage, IronChainMessageType};
 use crate::chained::proof::{ChainedProof, ProofQCType};
 use crate::chained::{ChainedQC, IronChain};
 use crate::crypto::CryptoInformationProvider;
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader, TQuorumCertificate};
+use crate::decision_tree::{DecisionNodeHeader, TQuorumCertificate};
 use atlas_common::collections::HashMap;
-use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo};
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
-use atlas_common::Err;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
 use atlas_core::messages::{ClientRqInfo, SessionBased};
@@ -21,8 +20,7 @@ use atlas_core::ordering_protocol::networking::serialize::{
 };
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{
-    BatchedDecision, DecisionAD, DecisionMetadata, ProtocolConsensusDecision, ProtocolMessage,
-    ShareableConsensusMessage,
+    BatchedDecision, ProtocolConsensusDecision, ProtocolMessage, ShareableConsensusMessage,
 };
 use either::Either;
 use std::sync::Arc;
@@ -68,11 +66,16 @@ where
         qcs: Vec<ChainedQC>,
         messages: Vec<StoredMessage<ProtocolMessage<RQ, IronChainSer<RQ>>>>,
     ) -> atlas_common::error::Result<ChainedProof<RQ>> {
-        let (decision_node, proposal_message) = Self::get_decision_header(&decision_node_header, messages)?;
+        let (decision_node, proposal_message) =
+            Self::get_decision_header(&decision_node_header, messages)?;
 
         let indexed_qcs = Self::get_qcs_index_from_vec(qcs, &decision_node_header)?;
 
-        Ok(ChainedProof::new(decision_node, proposal_message, indexed_qcs))
+        Ok(ChainedProof::new(
+            decision_node,
+            proposal_message,
+            indexed_qcs,
+        ))
     }
 
     fn init_proof_from_scm(
@@ -117,7 +120,12 @@ where
 
         let batched_decision = BatchedDecision::new_with_batch(seq_no, requests);
 
-        Ok(ProtocolConsensusDecision::new(seq_no, batched_decision, client_rq_info, digest))
+        Ok(ProtocolConsensusDecision::new(
+            seq_no,
+            batched_decision,
+            client_rq_info,
+            digest,
+        ))
     }
 }
 
@@ -137,7 +145,7 @@ where
             .find(|msg| matches!(msg.message().message(), IronChainMessageType::Proposal(_)))
             .ok_or(IronChainComposeError::NoProposalMessageFound)?;
 
-        let (header, message) = proposal_message.clone().into_inner();
+        let (_, message) = proposal_message.clone().into_inner();
 
         let (seq_no, message) = message.into_parts();
 
@@ -179,6 +187,8 @@ where
                 return Err(IronChainComposeError::QCDecisionNodeDoesNotMatchHeader);
             }
 
+            //TODO: This does not have to be all in a row
+            // As we can skip certain decisions. How to handle that?
             match qc.sequence_number().index(decision_seq) {
                 Either::Right(0) => {
                     indexed_qcs.insert(ProofQCType::PrePrepare, qc);

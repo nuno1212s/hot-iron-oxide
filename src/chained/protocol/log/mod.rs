@@ -135,7 +135,7 @@ impl VoteStore {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum NewViewGenerateError<CS: Error> {
     #[error("Failed to generate high qc")]
     FailedToGenerateHighQC,
@@ -147,7 +147,7 @@ pub enum NewViewGenerateError<CS: Error> {
     FailedToGenerateQC(#[from] ChainedQCGenerateError<CS>),
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum ChainedQCGenerateError<CS: Error> {
     #[error("Failed to combine partial signatures {0:?}")]
     FailedToCombinePartialSignatures(#[from] CS),
