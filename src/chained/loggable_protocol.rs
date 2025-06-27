@@ -31,21 +31,23 @@ const VOTE_GENERIC: &str = "VOTE-GENERIC";
 const PROPOSAL_GENERIC: &str = "PROPOSAL-GENERIC";
 const NEW_VIEW_GENERIC: &str = "NEW-VIEW-GENERIC";
 
-impl<RQ, NT, CR> LoggableOrderProtocol<RQ> for IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> LoggableOrderProtocol<RQ> for IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg + SessionBased,
     CR: CryptoInformationProvider,
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
+    RP: Send + 'static
 {
     type PersistableTypes = IronChainSer<RQ>;
 }
 
-impl<RQ, NT, CR> OrderProtocolLogHelper<RQ, IronChainSer<RQ>, IronChainSer<RQ>>
-    for IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> OrderProtocolLogHelper<RQ, IronChainSer<RQ>, IronChainSer<RQ>>
+    for IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg + SessionBased,
     CR: CryptoInformationProvider,
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
+    RP: Send + 'static
 {
     fn message_types() -> Vec<&'static str> {
         vec![VOTE_GENERIC, PROPOSAL_GENERIC, NEW_VIEW_GENERIC]
@@ -129,7 +131,7 @@ where
     }
 }
 
-impl<RQ, NT, CR> IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> IronChain<RQ, NT, CR, RP>
 where
     CR: CryptoInformationProvider,
     NT: 'static + OrderProtocolSendNode<RQ, IronChainSer<RQ>>,

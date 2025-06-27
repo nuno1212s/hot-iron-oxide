@@ -9,6 +9,7 @@ use crate::chained::protocol::decision::{
     ChainedDecision, ChainedDecisionPollResult, ChainedDecisionResult, ChainedDecisionState,
     FinalizeDecisionError,
 };
+use crate::chained::protocol::log::NewViewGenerateError;
 use crate::chained::{
     ChainedDecisionHandler, IronChainDecision, IronChainPollResult, IronChainResult,
 };
@@ -36,7 +37,6 @@ use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
-use crate::chained::protocol::log::NewViewGenerateError;
 
 const PROTOCOL_PHASES: u8 = 4;
 const PROTOCOL_PHASES_USIZE: usize = PROTOCOL_PHASES as usize;
@@ -301,7 +301,10 @@ where
                 Ok(IronChainResult::MessageProcessedNoUpdate)
             }
             ChainedDecisionResult::MessageIgnored => Ok(IronChainResult::MessageDropped),
-            ChainedDecisionResult::NextLeaderMessages() => Ok(IronChainResult::MessageDropped),
+            ChainedDecisionResult::NextLeaderMessages(message) => {
+                self.signals.push_signalled(decision.sequence_number().next());
+                Ok(IronChainResult::MessageProcessedNoUpdate)
+            },
         }
     }
 
@@ -359,6 +362,10 @@ where
         current_node: &DecisionNodeHeader,
         decision_index: usize,
     ) -> Result<bool, ChainConstructionError> {
+        if decision_index == 0 {
+            return Ok(false);
+        }
+        
         self.decision_list[decision_index - 1].set_state(ChainedDecisionState::PreCommit);
 
         let b_2 = self.chain_link(*current_node)?;

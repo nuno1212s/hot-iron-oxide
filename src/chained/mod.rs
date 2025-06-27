@@ -24,7 +24,7 @@ use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 mod chained_decision_tree;
 mod loggable_protocol;
@@ -57,7 +57,7 @@ type ChainedDecisionHandler = DecisionHandler<ChainedQC>;
 
 static MOD_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("CHAINED-HOT-IRON"));
 
-pub struct IronChain<RQ, NT, CR>
+pub struct IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg,
     CR: Send + Sync,
@@ -68,9 +68,10 @@ where
     is_executing: bool,
     decision_handler: ChainedDecisionHandler,
     protocol: ChainedHotStuffProtocol<RQ>,
+    pre_processor: RP
 }
 
-impl<RQ, NT, CR> IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg,
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
@@ -83,6 +84,7 @@ where
         timeouts: TimeoutModHandle,
         quorum_information: Arc<CR>,
         current_view: View,
+        reconfig_protocol: RP,
     ) -> Self {
         let protocol = ChainedHotStuffProtocol::new(node_id, rq_aggr, timeouts, current_view);
 
@@ -93,11 +95,12 @@ where
             is_executing: false,
             decision_handler: DecisionHandler::default(),
             protocol,
+            pre_processor: reconfig_protocol,
         }
     }
 }
 
-impl<RQ, NT, CR> OrderProtocolTolerance for IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> OrderProtocolTolerance for IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg,
     CR: Send + Sync,
@@ -115,7 +118,7 @@ where
     }
 }
 
-impl<RQ, NT, CR> Orderable for IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> Orderable for IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg,
     CR: Send + Sync,
@@ -125,7 +128,7 @@ where
     }
 }
 
-impl<RQ, NT, CR> TimeoutableMod<OPExResult<RQ, IronChainSer<RQ>>> for IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> TimeoutableMod<OPExResult<RQ, IronChainSer<RQ>>> for IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg,
     CR: Send + Sync,
@@ -142,7 +145,7 @@ where
     }
 }
 
-impl<RQ, NT, CR> OrderingProtocol<RQ> for IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> OrderingProtocol<RQ> for IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg + SessionBased,
     CR: CryptoInformationProvider,
@@ -165,7 +168,7 @@ where
     }
 
     fn poll(&mut self) -> atlas_common::error::Result<OPResult<RQ, Self::Serialization>> {
-        info!("Polling IronChain protocol...");
+        trace!("Polling IronChain protocol...");
         
         self.protocol
             .poll(&self.network_node, &self.decision_handler)
@@ -176,8 +179,6 @@ where
         &mut self,
         message: ShareableConsensusMessage<RQ, Self::Serialization>,
     ) -> atlas_common::error::Result<OPExResult<RQ, Self::Serialization>> {
-        info!("Processing message: {:?}", message);
-        
         let result = self
             .protocol
             .process_message::<CR, AtlasTHCryptoProvider, NT>(
@@ -218,7 +219,7 @@ where
     }
 }
 
-impl<RQ, RP, NT, CR> NetworkedOrderProtocolInitializer<RQ, RP, NT> for IronChain<RQ, NT, CR>
+impl<RQ, RP, NT, CR> NetworkedOrderProtocolInitializer<RQ, RP, NT> for IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg + SessionBased,
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
@@ -240,18 +241,11 @@ where
 
         let view = View::new_from_quorum(SeqNo::ZERO, quorum);
 
-        Ok(IronChain::new(
-            node_id,
-            node,
-            request_aggr,
-            timeout,
-            Arc::new(quorum_info),
-            view,
-        ))
+        Ok(IronChain::new(node_id, node, request_aggr, timeout, Arc::new(quorum_info), view, rq))
     }
 }
 
-impl<RQ, NT, CR> PermissionedOrderingProtocol for IronChain<RQ, NT, CR>
+impl<RQ, NT, CR, RP> PermissionedOrderingProtocol for IronChain<RQ, NT, CR, RP>
 where
     RQ: SerMsg + SessionBased,
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
