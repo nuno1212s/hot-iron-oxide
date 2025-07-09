@@ -1,5 +1,5 @@
 use crate::view::View;
-use atlas_common::crypto::hash::Digest;
+use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
@@ -8,6 +8,7 @@ use getset::{CopyGetters, Getters};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
+use tracing::debug;
 
 /// The Trait which specifies all of the required methods for a quorum certificate
 pub trait TQuorumCertificate: Orderable + Clone {
@@ -37,23 +38,32 @@ impl Orderable for DecisionNodeHeader {
 
 impl DecisionNodeHeader {
     fn initialize_header_from_previous(
-        digest: Digest,
+        client_command_digest: Digest,
         previous: &DecisionNodeHeader,
         contained_commands: usize,
     ) -> Self {
+        let block_digest = Self::calculate_node_header_digest(previous.sequence_number().next(), Some(previous.current_block_digest()), client_command_digest, contained_commands);
+        
         Self {
             view_no: previous.sequence_number().next(),
             previous_block: Some(previous.current_block_digest),
-            current_block_digest: digest,
+            current_block_digest: block_digest,
             contained_client_commands: contained_commands,
         }
     }
 
-    fn initialize_root_node(view: &View, digest: Digest, contained_commands: usize) -> Self {
+    fn initialize_root_node(view: &View, client_command_digest: Digest, contained_commands: usize) -> Self {
+        let block_digest = Self::calculate_node_header_digest(
+            view.sequence_number(),
+            None,
+            client_command_digest,
+            contained_commands,
+        );
+        
         Self {
             view_no: view.sequence_number(),
             previous_block: None,
-            current_block_digest: digest,
+            current_block_digest: block_digest,
             contained_client_commands: contained_commands,
         }
     }
@@ -64,12 +74,39 @@ impl DecisionNodeHeader {
         current_block_digest: Digest,
         contained_client_commands: usize,
     ) -> Self {
+        let block_digest = Self::calculate_node_header_digest(
+            view_no,
+            previous_block,
+            current_block_digest,
+            contained_client_commands,
+        );
+        
         Self {
             view_no,
             previous_block,
             current_block_digest,
             contained_client_commands,
         }
+    }
+
+    fn calculate_node_header_digest(
+        view_seq: SeqNo,
+        previous_block: Option<Digest>,
+        client_rq_digest: Digest,
+        contained_client_commands: usize,
+    ) -> Digest {
+        let blank = Digest::blank();
+        let blank_digest = blank.as_ref();
+        
+        let mut context = Context::new();
+        context.update(&view_seq.into_u32().to_le_bytes()[..]);
+        context.update(previous_block.as_ref().map_or_else(|| blank_digest, |d| d.as_ref()));
+        context
+            .update(client_rq_digest.as_ref());
+        context
+            .update(&contained_client_commands.to_le_bytes()[..]);
+        
+        context.finish()
     }
 }
 
@@ -93,12 +130,12 @@ impl<D> DecisionNode<D> {
     #[must_use]
     pub fn create_leaf(
         previous_node: &DecisionNodeHeader,
-        digest: Digest,
+        client_command_digest: Digest,
         client_commands: Vec<StoredMessage<D>>,
     ) -> Self {
         Self {
             decision_header: DecisionNodeHeader::initialize_header_from_previous(
-                digest,
+                client_command_digest,
                 previous_node,
                 client_commands.len(),
             ),
@@ -206,14 +243,18 @@ impl<QC> DecisionHandler<QC>
 where
     QC: TQuorumCertificate,
 {
-    pub fn safe_node<D>(&self, node: &DecisionNode<D>, qc: &QC) -> bool {
-        match (node.decision_header.previous_block, self.latest_qc()) {
+    pub fn safe_node<D>(&self, node: &DecisionNode<D>, qc: &QC) -> bool 
+    where QC: Debug {
+        
+        debug!("Checking if node is safe: {:?}. Latest QC: {:?}", node, self.latest_prepare_qc_ref());
+        match (node.decision_header.previous_block, self.latest_prepare_qc_ref().cloned()) {
             (Some(prev), Some(latest_qc)) => {
                 prev == latest_qc.decision_node().current_block_digest
                     && qc.sequence_number() > latest_qc.sequence_number()
             }
             (None, None) => true,
-            _ => false,
+            
+            _ => true,
         }
     }
 

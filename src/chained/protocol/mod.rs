@@ -304,7 +304,7 @@ where
                 Ok(IronChainResult::MessageProcessedNoUpdate)
             }
             ChainedDecisionResult::MessageIgnored => Ok(IronChainResult::MessageDropped),
-            ChainedDecisionResult::NextLeaderMessages(message) => {
+            ChainedDecisionResult::NextLeaderMessages(message, qc) => {
                 let next_decision = decision_seq.next();
                 
                 self.signals.push_signalled(next_decision);
@@ -312,7 +312,7 @@ where
                 let rq_aggr = self.request_aggr.clone();
                 
                 if let Some(decision) = self.get_decision(next_decision) {
-                    decision.handle_previous_node_completed_leader::<CR, CP, NT>(&rq_aggr, crypto, network)?;
+                    decision.handle_previous_node_completed_leader::<CR, CP, NT>(&rq_aggr, crypto, network, &qc)?;
                 } else {
                     error!("Next leader messages for seq_no {:?} but no decision found", next_decision);
                 };
@@ -387,8 +387,6 @@ where
         if decision_index == 0 {
             return Err(0);
         }
-        
-        self.decision_list[decision_index - 1].set_state(ChainedDecisionState::PreCommit);
 
         let b_2 = match self.chain_link(*current_node) {
             Ok(Some(node)) => node,
@@ -402,9 +400,9 @@ where
                 return Err(1);
             }
         };
-
-        self.decision_list[decision_index - 2].set_state(ChainedDecisionState::Commit);
-
+        
+        self.decision_list[decision_index - 1].set_state(ChainedDecisionState::PreCommit);
+        
         let b_1 = match self.chain_link(b_2) {
             Ok(Some(node)) => node,
             Ok(None) => {
@@ -418,7 +416,7 @@ where
             }
         };
 
-        self.decision_list[decision_index - 3].set_state(ChainedDecisionState::Decide);
+        self.decision_list[decision_index - 2].set_state(ChainedDecisionState::Commit);
         
         let _ = match self.chain_link(b_1) {
             Ok(Some(node)) => node,
@@ -432,7 +430,9 @@ where
                 return Err(3);
             }
         };
-        
+
+        self.decision_list[decision_index - 3].set_state(ChainedDecisionState::Decide);
+
         // Set all other previous, pending, requests to finalized state as this chain
         // Is now valid
         for index in (0..=decision_index - 4).rev() {
@@ -457,6 +457,10 @@ where
 
         let first_link_justify = first_link.justify();
 
+        info!("First link header: {first_link_header:?}. Chaining link for node: {:?}, justify: {first_link_justify:?}.\
+         Current pending nodes: {:?}", 
+            first_link.decision_header().previous_block(), &self.pending_nodes);
+        
         let b_2 = match (
             first_link_justify,
             first_link.decision_header().previous_block(),

@@ -35,7 +35,7 @@ impl<D> ChainedDecisionNode<D> {
     pub fn create_leaf(
         view_seq: SeqNo,
         previous_node: &DecisionNodeHeader,
-        digest: Digest,
+        client_command_digest: Digest,
         client_commands: Vec<StoredMessage<D>>,
         justify: ChainedQC,
     ) -> Self {
@@ -43,9 +43,9 @@ impl<D> ChainedDecisionNode<D> {
             == justify.decision_node().current_block_digest()
             && justify.decision_node().sequence_number() == view_seq.prev()
         {
-            DecisionNode::create_leaf(previous_node, digest, client_commands)
+            DecisionNode::create_leaf(previous_node, client_command_digest, client_commands)
         } else {
-            DecisionNode::create_blank_branch_node(view_seq, digest, client_commands)
+            DecisionNode::create_blank_branch_node(view_seq, client_command_digest, client_commands)
         };
 
         Self {
@@ -104,5 +104,13 @@ impl<D> PendingDecisionNodes<D> {
 impl<D> Default for PendingDecisionNodes<D> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<D> Debug for PendingDecisionNodes<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingDecisionNodes")
+            .field("map", &self.map)
+            .finish()
     }
 }
