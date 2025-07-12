@@ -29,8 +29,8 @@ use tracing::{debug, error, info, trace};
 mod chained_decision_tree;
 mod loggable_protocol;
 pub mod messages;
-mod protocol;
 mod proof;
+mod protocol;
 
 type IronChainResult<RQ> = OPExecResult<
     DecisionMetadata<RQ, IronChainSer<RQ>>,
@@ -68,7 +68,7 @@ where
     is_executing: bool,
     decision_handler: ChainedDecisionHandler,
     protocol: ChainedHotStuffProtocol<RQ>,
-    pre_processor: RP
+    pre_processor: RP,
 }
 
 impl<RQ, NT, CR, RP> IronChain<RQ, NT, CR, RP>
@@ -169,9 +169,13 @@ where
 
     fn poll(&mut self) -> atlas_common::error::Result<OPResult<RQ, Self::Serialization>> {
         trace!("Polling IronChain protocol...");
-        
+
         self.protocol
-            .poll(&self.network_node, &self.decision_handler)
+            .poll::<_, AtlasTHCryptoProvider, _>(
+                &self.quorum_information,
+                &self.network_node,
+                &self.decision_handler,
+            )
             .map_err(From::from)
     }
 
@@ -181,13 +185,13 @@ where
     ) -> atlas_common::error::Result<OPExResult<RQ, Self::Serialization>> {
         let result = self
             .protocol
-            .process_message::<CR, AtlasTHCryptoProvider, NT>(
+            .process_message::<_, AtlasTHCryptoProvider, _>(
                 &self.quorum_information,
                 &self.network_node,
                 &mut self.decision_handler,
                 message,
             )?;
-        
+
         match &result {
             IronChainResult::MessageQueued => {
                 info!("Message queued in IronChain protocol.");
@@ -241,7 +245,15 @@ where
 
         let view = View::new_from_quorum(SeqNo::ZERO, quorum);
 
-        Ok(IronChain::new(node_id, node, request_aggr, timeout, Arc::new(quorum_info), view, rq))
+        Ok(IronChain::new(
+            node_id,
+            node,
+            request_aggr,
+            timeout,
+            Arc::new(quorum_info),
+            view,
+            rq,
+        ))
     }
 }
 

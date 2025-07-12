@@ -1,4 +1,4 @@
-use crate::protocol::messages::{ProposalType, ProposalTypes, VoteType, VoteTypes};
+use crate::protocol::messages::{ProposalTypes, VoteTypes};
 use atlas_metrics::metrics::{metric_duration, MetricKind};
 use atlas_metrics::{MetricLevel, MetricRegistry};
 use enum_map::EnumMap;

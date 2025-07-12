@@ -1,5 +1,7 @@
 use crate::chained::ChainedQC;
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader, TQuorumCertificate};
+use crate::decision_tree::{
+    DecisionExtensionVerifier, DecisionNode, DecisionNodeHeader, TQuorumCertificate,
+};
 use crate::view::View;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::hash::Digest;
@@ -98,6 +100,46 @@ impl<D> PendingDecisionNodes<D> {
 
     pub(super) fn remove(&mut self, header: &Digest) -> Option<ChainedDecisionNode<D>> {
         self.map.remove(header)
+    }
+}
+
+impl<D> DecisionExtensionVerifier<ChainedQC> for PendingDecisionNodes<D> {
+    fn is_extension_of_known_node(
+        &self,
+        node: &DecisionNodeHeader,
+        last_known: Option<&ChainedQC>,
+    ) -> bool {
+        let mut current_node = node;
+
+        loop {
+            match current_node.previous_block() {
+                None if last_known.is_none() => return true,
+                None => return false,
+                Some(previous_block_digest) => {
+                    if let Some(known_node) = last_known {
+                        if *previous_block_digest
+                            == known_node.decision_node().current_block_digest()
+                        {
+                            return true;
+                        }
+                    }
+
+                    if let Some(known_node) = self.get(previous_block_digest) {
+                        if known_node.decision_header().sequence_number()
+                            == current_node.sequence_number().prev()
+                        {
+                            current_node = known_node.decision_header();
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
     }
 }
 

@@ -452,7 +452,8 @@ where
                     unreachable!()
                 };
 
-                if !dec_handler.safe_node(node, qc) {
+                todo!("Handle Prepare proposal in replica");
+                /*if !dec_handler.safe_node(node, qc) {
                     warn!(
                         "Node {:?}, QC {:?} does not extend from {:?}",
                         node,
@@ -461,7 +462,7 @@ where
                     );
 
                     return Err(DecisionError::InvalidDecisionNode);
-                }
+                }*/
 
                 self.decision_log.set_current_proposal(Some(node.clone()));
 

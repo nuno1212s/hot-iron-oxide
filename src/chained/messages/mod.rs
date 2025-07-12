@@ -22,11 +22,11 @@ impl<D> IronChainMessage<D> {
     pub fn new(seq_no: SeqNo, message: IronChainMessageType<D>) -> Self {
         Self { seq_no, message }
     }
-    
+
     pub fn into_parts(self) -> (SeqNo, IronChainMessageType<D>) {
         (self.seq_no, self.message)
     }
-    
+
 }
 
 impl<RQ> Orderable for IronChainMessage<RQ> {
@@ -104,20 +104,32 @@ impl Orderable for VoteDetails {
     }
 }
 
+/// Represents a new view message in the IronChain protocol.
+///
+/// The signature should be of the sequence number of the view that this message is for.
+/// As well as the (optional) QC that this view is based on.
+///
+/// This message is sent to the leader of the view to force a new view to be created in cases
+/// of timeouts or bootstrap.
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Hash, Eq, PartialEq, Debug, Getters)]
 #[get = "pub"]
 pub struct NewViewMessage {
-    pub qc: Option<ChainedQC>,
+    qc: Option<ChainedQC>,
+    signature: PartialSignature,
 }
 
 impl NewViewMessage {
-    pub fn from_previous_qc(qc: ChainedQC) -> Self {
-        Self { qc: Some(qc) }
+    pub fn from_previous_qc(qc: ChainedQC, signature: PartialSignature) -> Self {
+        Self { qc: Some(qc), signature }
     }
 
-    pub fn from_empty() -> Self {
-        Self { qc: None }
+    pub fn from_empty(signature: PartialSignature) -> Self {
+        Self { qc: None, signature }
+    }
+    
+    pub fn into_parts(self) -> (Option<ChainedQC>, PartialSignature) {
+        (self.qc, self.signature)
     }
 }
 
@@ -132,7 +144,7 @@ impl<D> ProposalMessage<D> {
     pub fn new(proposal: ChainedDecisionNode<D>) -> Self {
         Self { proposal }
     }
-    
+
     pub fn into_parts(self) -> ChainedDecisionNode<D> {
         self.proposal
     }

@@ -72,8 +72,9 @@ where
         let mut decision_list = VecDeque::with_capacity(PROTOCOL_PHASES as usize);
 
         let mut signals = Signals::default();
-        
+
         let first_view = curr_view.clone();
+
         signals.push_signalled(curr_view.sequence_number());
 
         for i in 0..PROTOCOL_PHASES {
@@ -154,13 +155,16 @@ where
         Ok(())
     }
 
-    pub(super) fn poll<NT>(
+    pub(super) fn poll<CR, CP, NT>(
         &mut self,
+        crypto: &Arc<CR>,
         network: &Arc<NT>,
         decision_handler: &ChainedDecisionHandler,
     ) -> Result<IronChainPollResult<RQ>, FinalizeDecisionsError>
     where
         RQ: SessionBased,
+        CR: CryptoInformationProvider,
+        CP: CryptoProvider,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
     {
         while let Some(seq) = self.signals.pop_signalled() {
@@ -172,7 +176,7 @@ where
                     continue;
                 };
 
-                decision.poll(&*rq_aggr, decision_handler, network)
+                decision.poll::<_, _, CP, _>(&*rq_aggr, crypto, decision_handler, network)
             };
 
             match poll_result {
@@ -180,6 +184,12 @@ where
                     return Ok(IronChainPollResult::ReceiveMsg)
                 }
                 ChainedDecisionPollResult::Exec(message) => {
+                    info!(
+                        "Polling revealed message {:?} for decision seq_no {:?}",
+                        message.message(),
+                        seq
+                    );
+
                     self.signals.push_signalled(seq);
 
                     return Ok(IronChainPollResult::Exec(message));
@@ -259,25 +269,36 @@ where
         {
             Either::Right(index) => index,
             Either::Left(_) => {
-                warn!("Received message {:?} from {:?} in past view {:?}, ignoring",
+                warn!(
+                    "Received message {:?} from {:?} in past view {:?}, ignoring",
                     message.message(),
                     message.header().from(),
                     self.curr_view.sequence_number()
                 );
-                
+
                 return Ok(IronChainResult::MessageDropped);
             }
         };
-        
+
         let (decision_seq, result) = {
             let Some(decision) = self.decision_list.get_mut(decision_index) else {
                 //TODO: Queue message
                 todo!("Queue message for later processing");
             };
 
-            (decision.sequence_number(), decision.process_message::<CR, CP, NT>(&self.request_aggr, decision_handler, crypto, network, message)?)
+            (
+                decision.sequence_number(),
+                decision.process_message::<CR, CP, NT>(
+                    &self.request_aggr,
+                    decision_handler,
+                    crypto,
+                    network,
+                    &self.pending_nodes,
+                    message,
+                )?,
+            )
         };
-        
+
         match result {
             ChainedDecisionResult::ProposalGenerated(proposal_header, message) => {
                 Ok(IronChainResult::ProgressedDecision(
@@ -291,7 +312,7 @@ where
                 ))
             }
             ChainedDecisionResult::VoteGenerated(node, message) => {
-                self.handle_vote_generated(decision_index, node, message)
+                self.handle_vote_generated(decision_index, node, message, decision_handler)
             }
             ChainedDecisionResult::MessageQueued => {
                 self.signals.push_signalled(decision_seq);
@@ -306,19 +327,24 @@ where
             ChainedDecisionResult::MessageIgnored => Ok(IronChainResult::MessageDropped),
             ChainedDecisionResult::NextLeaderMessages(message, qc) => {
                 let next_decision = decision_seq.next();
-                
+
                 self.signals.push_signalled(next_decision);
-                
+
                 let rq_aggr = self.request_aggr.clone();
-                
+
                 if let Some(decision) = self.get_decision(next_decision) {
-                    decision.handle_previous_node_completed_leader::<CR, CP, NT>(&rq_aggr, crypto, network, &qc)?;
+                    decision.handle_previous_node_completed_leader::<CR, CP, NT>(
+                        &rq_aggr, crypto, network, &qc,
+                    );
                 } else {
-                    error!("Next leader messages for seq_no {:?} but no decision found", next_decision);
+                    error!(
+                        "Next leader messages for seq_no {:?} but no decision found",
+                        next_decision
+                    );
                 };
-                
+
                 Ok(IronChainResult::MessageProcessedNoUpdate)
-            },
+            }
         }
     }
 
@@ -327,10 +353,11 @@ where
         decision_index: usize,
         node: ChainedDecisionNode<RQ>,
         message: ShareableMessage<IronChainMessage<RQ>>,
-    ) -> Result<IronChainResult<RQ>,  IronChainProcessError<CS>>
+        decision_handler: &mut ChainedDecisionHandler,
+    ) -> Result<IronChainResult<RQ>, IronChainProcessError<CS>>
     where
         RQ: SessionBased,
-        CS: Error
+        CS: Error,
     {
         let decision = self
             .decision_list
@@ -348,46 +375,42 @@ where
             MaybeVec::from_one(message),
         );
 
-        Ok(match self.node_chain(&header, decision_index) {
-            Ok(_) => {
-                let finalized_decisions = self.finalize()?;
+        Ok(
+            match self.node_chain(&header, decision_index, decision_handler) {
+                Ok(_) => {
+                    let finalized_decisions = self.finalize()?;
 
-                info!("Finalized Decisions: {:?}", finalized_decisions);
-                let mut vec = Vec::with_capacity(finalized_decisions.len());
+                    info!("Finalized Decisions: {:?}", finalized_decisions);
+                    let mut vec = Vec::with_capacity(finalized_decisions.len());
 
-                vec.push(decision_information);
+                    vec.push(decision_information);
 
-                vec.append(&mut finalized_decisions.into_vec());
+                    vec.append(&mut finalized_decisions.into_vec());
 
-                let vec = MaybeVec::from_many(vec);
+                    let vec = MaybeVec::from_many(vec);
 
-                IronChainResult::ProgressedDecision(
-                    DecisionsAhead::Ignore,
-                    vec,
-                )
-            }
-            Err(node_chain) => {
-                info!("Failed to create node chain for decision index {decision_index}, decision: {:?}. Node chain is {}",
-                decision_information, node_chain
-            );
+                    IronChainResult::ProgressedDecision(DecisionsAhead::Ignore, vec)
+                }
+                Err(node_chain) => {
+                    info!("Failed to create node chain for decision index {decision_index}, decision: {:?}. Node chain is {}",
+                    decision_information, node_chain
+                );
 
-                IronChainResult::ProgressedDecision(
-                    DecisionsAhead::Ignore,
-                    MaybeVec::from_one(decision_information),
-                )
-            }
-        })
+                    IronChainResult::ProgressedDecision(
+                        DecisionsAhead::Ignore,
+                        MaybeVec::from_one(decision_information),
+                    )
+                }
+            },
+        )
     }
 
     fn node_chain(
         &mut self,
         current_node: &DecisionNodeHeader,
         decision_index: usize,
+        decision_handler: &mut ChainedDecisionHandler,
     ) -> Result<(), usize> {
-        if decision_index == 0 {
-            return Err(0);
-        }
-
         let b_2 = match self.chain_link(*current_node) {
             Ok(Some(node)) => node,
             Ok(None) => {
@@ -400,9 +423,10 @@ where
                 return Err(1);
             }
         };
-        
-        self.decision_list[decision_index - 1].set_state(ChainedDecisionState::PreCommit);
-        
+
+        self.decision_list[decision_index]
+            .advance_state(ChainedDecisionState::PreCommit, decision_handler);
+
         let b_1 = match self.chain_link(b_2) {
             Ok(Some(node)) => node,
             Ok(None) => {
@@ -416,8 +440,9 @@ where
             }
         };
 
-        self.decision_list[decision_index - 2].set_state(ChainedDecisionState::Commit);
-        
+        self.decision_list[decision_index - 1]
+            .advance_state(ChainedDecisionState::Commit, decision_handler);
+
         let _ = match self.chain_link(b_1) {
             Ok(Some(node)) => node,
             Ok(None) => {
@@ -431,12 +456,14 @@ where
             }
         };
 
-        self.decision_list[decision_index - 3].set_state(ChainedDecisionState::Decide);
+        self.decision_list[decision_index - 2]
+            .advance_state(ChainedDecisionState::Decide, decision_handler);
 
         // Set all other previous, pending, requests to finalized state as this chain
         // Is now valid
-        for index in (0..=decision_index - 4).rev() {
-            self.decision_list[index].set_state(ChainedDecisionState::Finalized);
+        for index in (0..=decision_index - 3).rev() {
+            self.decision_list[index]
+                .advance_state(ChainedDecisionState::Finalized, decision_handler);
         }
 
         Ok(())
@@ -460,7 +487,7 @@ where
         info!("First link header: {first_link_header:?}. Chaining link for node: {:?}, justify: {first_link_justify:?}.\
          Current pending nodes: {:?}", 
             first_link.decision_header().previous_block(), &self.pending_nodes);
-        
+
         let b_2 = match (
             first_link_justify,
             first_link.decision_header().previous_block(),
@@ -477,7 +504,6 @@ where
                     })?
             }
             (None, None) => {
-                
                 // This is the root node, no previous block so no justify
                 return Ok(None);
             }
@@ -502,10 +528,27 @@ where
             .decision_list
             .pop_front()
             .expect("Decision list should not be empty");
-
+        
         self.curr_view = self.curr_view.next_view();
+        
+        self.populate_decision();
 
         decision
+    }
+    
+    fn populate_decision(&mut self) {
+        let to_create = self
+            .decision_list
+            .back()
+            .map(Orderable::sequence_number)
+            .unwrap_or_else(|| self.curr_view.sequence_number())
+            .next();
+
+        let view = self.curr_view.with_new_seq(to_create);
+
+        let new_decision = ChainedDecision::new(view, self.node_id);
+
+        self.decision_list.push_back(new_decision);
     }
 
     fn finalize(&mut self) -> Result<MaybeVec<IronChainDecision<RQ>>, FinalizeDecisionsError>

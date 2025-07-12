@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use tracing::debug;
+use crate::chained::ChainedQC;
 
 /// The Trait which specifies all of the required methods for a quorum certificate
 pub trait TQuorumCertificate: Orderable + Clone {
@@ -233,6 +234,16 @@ impl<D> From<DecisionNode<D>> for (DecisionNodeHeader, Vec<StoredMessage<D>>) {
     }
 }
 
+pub trait DecisionExtensionVerifier<QC> {
+
+    fn is_extension_of_known_node(
+        &self,
+        node: &DecisionNodeHeader,
+        locked_qc: Option<&QC>,
+    ) -> bool;
+
+}
+
 pub struct DecisionHandler<QC> {
     latest_qc: Option<QC>,
     latest_prepare_qc: Option<QC>,
@@ -243,18 +254,19 @@ impl<QC> DecisionHandler<QC>
 where
     QC: TQuorumCertificate,
 {
-    pub fn safe_node<D>(&self, node: &DecisionNode<D>, qc: &QC) -> bool 
-    where QC: Debug {
+    pub fn safe_node<D, EV>(&self, node: &DecisionNode<D>, qc: &QC, extension_verifier: &EV) -> bool
+    where QC: Debug, EV: DecisionExtensionVerifier<QC> {
         
-        debug!("Checking if node is safe: {:?}. Latest QC: {:?}", node, self.latest_prepare_qc_ref());
-        match (node.decision_header.previous_block, self.latest_prepare_qc_ref().cloned()) {
-            (Some(prev), Some(latest_qc)) => {
-                prev == latest_qc.decision_node().current_block_digest
-                    && qc.sequence_number() > latest_qc.sequence_number()
+        debug!("Checking if node is safe: {:?}. QC: {:?}. Latest QC: {:?}", node, qc, self.latest_prepare_qc_ref());
+
+        match self.latest_locked_qc_ref() {
+            None =>
+                // If there is no locked QC, then we are at the beginning of the protocol and we just need to check safety rule
+                extension_verifier.is_extension_of_known_node(node.decision_header(), None),
+            Some(locked_qc) => {
+                extension_verifier.is_extension_of_known_node(node.decision_header(), Some(locked_qc))
+                && qc.sequence_number() >= locked_qc.sequence_number()
             }
-            (None, None) => true,
-            
-            _ => true,
         }
     }
 

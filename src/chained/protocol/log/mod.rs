@@ -13,6 +13,7 @@ use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use std::collections::hash_map::Entry;
 use std::collections::HashSet;
 use std::error::Error;
+use getset::Getters;
 use thiserror::Error;
 
 pub enum DecisionLog {
@@ -42,7 +43,7 @@ impl DecisionLog {
 
 #[derive(Default)]
 pub struct NewViewStore {
-    new_view: HashMap<Option<ChainedQC>, HashSet<NodeId>>,
+    new_view: HashMap<Option<ChainedQC>, HashMap<NodeId, PartialSignature>>,
 }
 
 impl NewViewStore {
@@ -51,24 +52,49 @@ impl NewViewStore {
         voter: NodeId,
         vote_message: NewViewMessage,
     ) -> bool {
-        let NewViewMessage { qc } = vote_message;
+        let (qc, signature) = vote_message.into_parts();
 
-        let previous = self.new_view.entry(qc).or_default().insert(voter);
+        let entry = self.new_view.entry(qc).or_default().entry(voter);
 
-        previous
+        match entry {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(vacant) => {
+                vacant.insert(signature);
+                true
+            }
+        }
     }
 
-    pub(in super::super) fn get_high_qc(&self) -> Option<&ChainedQC> {
+    pub(in super::super) fn get_high_qc(&self) -> Result<NewViewQCResult, NewViewQCError> {
         self.new_view
-            .keys()
-            .max_by_key(|qc| qc.as_ref().map(Orderable::sequence_number))
-            .and_then(Option::as_ref)
+            .iter()
+            .max_by_key(|(qc, votes)| qc.as_ref().map(Orderable::sequence_number))
+            .and_then(|(qc, votes)| {
+                Some(NewViewQCResult {
+                    high_qc: qc.clone(),
+                    signatures: votes.clone(),
+                })
+            }).ok_or(NewViewQCError::NoVotesReceived)
+    }
+}
+
+#[derive(Getters)]
+pub struct NewViewQCResult {
+    high_qc: Option<ChainedQC>,
+    #[get = "pub"]
+    signatures: HashMap<NodeId, PartialSignature>,
+}
+
+impl NewViewQCResult {
+    pub fn high_qc(&self) -> Option<&ChainedQC> {
+        self.high_qc.as_ref()
     }
 }
 
 #[derive(Default)]
 pub struct VoteStore {
     votes: HashMap<VoteDetails, HashMap<NodeId, PartialSignature>>,
+    proposed: bool
 }
 
 impl VoteStore {
@@ -100,6 +126,14 @@ impl VoteStore {
         })
     }
 
+    pub (in super::super) fn is_proposed(&self) -> bool {
+        self.proposed
+    }
+    
+    pub(in super::super) fn set_proposed(&mut self, proposed: bool) {
+        self.proposed = proposed;
+    }
+    
     pub(in super::super) fn get_quorum_qc<CR, CP>(
         &mut self,
         view: &View,
@@ -145,6 +179,8 @@ pub enum NewViewGenerateError<CS: Error> {
     NotEnoughVotes,
     #[error("Failed to generate QC from votes {0:?}")]
     FailedToGenerateQC(#[from] ChainedQCGenerateError<CS>),
+    #[error("Failed to generate new view message")]
+    FailedToGenerateNewViewQC( NewViewQCError),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -153,4 +189,11 @@ pub enum ChainedQCGenerateError<CS: Error> {
     FailedToCombinePartialSignatures(#[from] CS),
     #[error("Failed to collect the highest vote")]
     NotEnoughVotes,
+}
+
+
+#[derive(Error, Debug, Clone)]
+pub enum NewViewQCError {
+    #[error("There are no available votes for a new view")]
+    NoVotesReceived
 }
