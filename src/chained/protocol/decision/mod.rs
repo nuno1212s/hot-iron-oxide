@@ -22,10 +22,10 @@ use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::ShareableMessage;
 use atlas_metrics::metrics::metric_duration;
 use getset::{Getters, Setters};
-use std::sync::Arc;
-use std::time::Instant;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, info, trace, warn};
 
@@ -150,7 +150,7 @@ where
         }
     }
 
-    pub(super) fn poll<RQA,CR, CP, NT>(
+    pub(super) fn poll<RQA, CR, CP, NT>(
         &mut self,
         request_aggr: &RQA,
         crypto: &Arc<CR>,
@@ -165,8 +165,11 @@ where
     {
         return match &self.state {
             ChainedDecisionState::Init if !self.is_leader() => {
-                self.generate_and_send_new_view_message::<CR, CP, NT>(decision_handler.latest_locked_qc_ref().cloned(),
-                                                        network, crypto);
+                self.generate_and_send_new_view_message::<CR, CP, NT>(
+                    decision_handler.latest_locked_qc_ref().cloned(),
+                    network,
+                    crypto,
+                );
 
                 self.state = ChainedDecisionState::Prepare(0, false);
 
@@ -315,7 +318,10 @@ where
         );
 
         if *received >= self.view.quorum() && !*proposed {
-            let decision_log_high_qc = self.decision_log.as_mut_leader().get_high_qc()
+            let decision_log_high_qc = self
+                .decision_log
+                .as_mut_leader()
+                .get_high_qc()
                 .map_err(|err| NewViewGenerateError::FailedToGenerateNewViewQC(err))?;
 
             *proposed = true;
@@ -360,8 +366,11 @@ where
                 {
                     votes
                 } else {
-                    warn!("Did not accept vote from {:?} for view: {:?}",
-                        message.header().from(), self.view);
+                    warn!(
+                        "Did not accept vote from {:?} for view: {:?}",
+                        message.header().from(),
+                        self.view
+                    );
                     return Ok(ChainedDecisionResult::MessageIgnored);
                 }
             }
@@ -382,9 +391,10 @@ where
             self.view.quorum()
         );
 
-        if vote_count >= self.view.quorum() && !self.decision_log.as_mut_next_leader().is_proposed() {
+        if vote_count >= self.view.quorum() && !self.decision_log.as_mut_next_leader().is_proposed()
+        {
             self.decision_log.as_mut_next_leader().set_proposed(true);
-            
+
             let qc = self
                 .decision_log
                 .as_mut_next_leader()
@@ -443,7 +453,8 @@ where
         };
 
         if let Some(qc) = proposal_message.proposal().justify() {
-            if !decision_handler.safe_node(proposal_message.proposal(), qc, pending_decision_nodes) {
+            if !decision_handler.safe_node(proposal_message.proposal(), qc, pending_decision_nodes)
+            {
                 warn!(
                     "Proposal message from {:?} is not safe, ignoring it.",
                     message.header().from()
@@ -459,7 +470,8 @@ where
 
             self.set_decision_qc(Some(qc.clone()));
         } else {
-            info!("Proposal message from {:?} has no justification, processing it as root block.",
+            info!(
+                "Proposal message from {:?} has no justification, processing it as root block.",
                 message.header().from()
             );
         }
@@ -544,8 +556,7 @@ where
         previous: Option<ChainedQC>,
         network: &Arc<NT>,
         crypto: &Arc<CR>,
-    )
-    where
+    ) where
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,
@@ -558,9 +569,7 @@ where
 
             move || {
                 let signature = get_partial_signature_for_message::<CR, CP, Option<ChainedQC>>(
-                    &*crypto,
-                    seq_no,
-                    &previous,
+                    &*crypto, seq_no, &previous,
                 );
 
                 let new_view = if let Some(qc) = previous {
@@ -571,10 +580,7 @@ where
 
                 info!("Sending new view message: {:?}", new_view);
                 let _ = network.send(
-                    IronChainMessage::new(
-                        seq_no,
-                        IronChainMessageType::NewView(new_view),
-                    ),
+                    IronChainMessage::new(seq_no, IronChainMessageType::NewView(new_view)),
                     primary,
                     true,
                 );

@@ -528,14 +528,14 @@ where
             .decision_list
             .pop_front()
             .expect("Decision list should not be empty");
-        
+
         self.curr_view = self.curr_view.next_view();
-        
+
         self.populate_decision();
 
         decision
     }
-    
+
     fn populate_decision(&mut self) {
         let to_create = self
             .decision_list

@@ -10,10 +10,10 @@ use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
+use getset::Getters;
 use std::collections::hash_map::Entry;
 use std::collections::HashSet;
 use std::error::Error;
-use getset::Getters;
 use thiserror::Error;
 
 pub enum DecisionLog {
@@ -74,7 +74,8 @@ impl NewViewStore {
                     high_qc: qc.clone(),
                     signatures: votes.clone(),
                 })
-            }).ok_or(NewViewQCError::NoVotesReceived)
+            })
+            .ok_or(NewViewQCError::NoVotesReceived)
     }
 }
 
@@ -94,7 +95,7 @@ impl NewViewQCResult {
 #[derive(Default)]
 pub struct VoteStore {
     votes: HashMap<VoteDetails, HashMap<NodeId, PartialSignature>>,
-    proposed: bool
+    proposed: bool,
 }
 
 impl VoteStore {
@@ -126,14 +127,14 @@ impl VoteStore {
         })
     }
 
-    pub (in super::super) fn is_proposed(&self) -> bool {
+    pub(in super::super) fn is_proposed(&self) -> bool {
         self.proposed
     }
-    
+
     pub(in super::super) fn set_proposed(&mut self, proposed: bool) {
         self.proposed = proposed;
     }
-    
+
     pub(in super::super) fn get_quorum_qc<CR, CP>(
         &mut self,
         view: &View,
@@ -180,7 +181,7 @@ pub enum NewViewGenerateError<CS: Error> {
     #[error("Failed to generate QC from votes {0:?}")]
     FailedToGenerateQC(#[from] ChainedQCGenerateError<CS>),
     #[error("Failed to generate new view message")]
-    FailedToGenerateNewViewQC( NewViewQCError),
+    FailedToGenerateNewViewQC(NewViewQCError),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -191,9 +192,8 @@ pub enum ChainedQCGenerateError<CS: Error> {
     NotEnoughVotes,
 }
 
-
 #[derive(Error, Debug, Clone)]
 pub enum NewViewQCError {
     #[error("There are no available votes for a new view")]
-    NoVotesReceived
+    NoVotesReceived,
 }

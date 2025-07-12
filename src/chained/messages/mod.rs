@@ -26,7 +26,6 @@ impl<D> IronChainMessage<D> {
     pub fn into_parts(self) -> (SeqNo, IronChainMessageType<D>) {
         (self.seq_no, self.message)
     }
-
 }
 
 impl<RQ> Orderable for IronChainMessage<RQ> {
@@ -121,13 +120,19 @@ pub struct NewViewMessage {
 
 impl NewViewMessage {
     pub fn from_previous_qc(qc: ChainedQC, signature: PartialSignature) -> Self {
-        Self { qc: Some(qc), signature }
+        Self {
+            qc: Some(qc),
+            signature,
+        }
     }
 
     pub fn from_empty(signature: PartialSignature) -> Self {
-        Self { qc: None, signature }
+        Self {
+            qc: None,
+            signature,
+        }
     }
-    
+
     pub fn into_parts(self) -> (Option<ChainedQC>, PartialSignature) {
         (self.qc, self.signature)
     }

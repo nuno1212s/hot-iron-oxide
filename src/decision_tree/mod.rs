@@ -1,3 +1,4 @@
+use crate::chained::ChainedQC;
 use crate::view::View;
 use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
@@ -9,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use tracing::debug;
-use crate::chained::ChainedQC;
 
 /// The Trait which specifies all of the required methods for a quorum certificate
 pub trait TQuorumCertificate: Orderable + Clone {
@@ -43,8 +43,13 @@ impl DecisionNodeHeader {
         previous: &DecisionNodeHeader,
         contained_commands: usize,
     ) -> Self {
-        let block_digest = Self::calculate_node_header_digest(previous.sequence_number().next(), Some(previous.current_block_digest()), client_command_digest, contained_commands);
-        
+        let block_digest = Self::calculate_node_header_digest(
+            previous.sequence_number().next(),
+            Some(previous.current_block_digest()),
+            client_command_digest,
+            contained_commands,
+        );
+
         Self {
             view_no: previous.sequence_number().next(),
             previous_block: Some(previous.current_block_digest),
@@ -53,14 +58,18 @@ impl DecisionNodeHeader {
         }
     }
 
-    fn initialize_root_node(view: &View, client_command_digest: Digest, contained_commands: usize) -> Self {
+    fn initialize_root_node(
+        view: &View,
+        client_command_digest: Digest,
+        contained_commands: usize,
+    ) -> Self {
         let block_digest = Self::calculate_node_header_digest(
             view.sequence_number(),
             None,
             client_command_digest,
             contained_commands,
         );
-        
+
         Self {
             view_no: view.sequence_number(),
             previous_block: None,
@@ -81,7 +90,7 @@ impl DecisionNodeHeader {
             current_block_digest,
             contained_client_commands,
         );
-        
+
         Self {
             view_no,
             previous_block,
@@ -98,15 +107,17 @@ impl DecisionNodeHeader {
     ) -> Digest {
         let blank = Digest::blank();
         let blank_digest = blank.as_ref();
-        
+
         let mut context = Context::new();
         context.update(&view_seq.into_u32().to_le_bytes()[..]);
-        context.update(previous_block.as_ref().map_or_else(|| blank_digest, |d| d.as_ref()));
-        context
-            .update(client_rq_digest.as_ref());
-        context
-            .update(&contained_client_commands.to_le_bytes()[..]);
-        
+        context.update(
+            previous_block
+                .as_ref()
+                .map_or_else(|| blank_digest, |d| d.as_ref()),
+        );
+        context.update(client_rq_digest.as_ref());
+        context.update(&contained_client_commands.to_le_bytes()[..]);
+
         context.finish()
     }
 }
@@ -235,13 +246,8 @@ impl<D> From<DecisionNode<D>> for (DecisionNodeHeader, Vec<StoredMessage<D>>) {
 }
 
 pub trait DecisionExtensionVerifier<QC> {
-
-    fn is_extension_of_known_node(
-        &self,
-        node: &DecisionNodeHeader,
-        locked_qc: Option<&QC>,
-    ) -> bool;
-
+    fn is_extension_of_known_node(&self, node: &DecisionNodeHeader, locked_qc: Option<&QC>)
+        -> bool;
 }
 
 pub struct DecisionHandler<QC> {
@@ -255,17 +261,27 @@ where
     QC: TQuorumCertificate,
 {
     pub fn safe_node<D, EV>(&self, node: &DecisionNode<D>, qc: &QC, extension_verifier: &EV) -> bool
-    where QC: Debug, EV: DecisionExtensionVerifier<QC> {
-        
-        debug!("Checking if node is safe: {:?}. QC: {:?}. Latest QC: {:?}", node, qc, self.latest_prepare_qc_ref());
+    where
+        QC: Debug,
+        EV: DecisionExtensionVerifier<QC>,
+    {
+        debug!(
+            "Checking if node is safe: {:?}. QC: {:?}. Latest QC: {:?}",
+            node,
+            qc,
+            self.latest_prepare_qc_ref()
+        );
 
         match self.latest_locked_qc_ref() {
             None =>
-                // If there is no locked QC, then we are at the beginning of the protocol and we just need to check safety rule
-                extension_verifier.is_extension_of_known_node(node.decision_header(), None),
+            // If there is no locked QC, then we are at the beginning of the protocol and we just need to check safety rule
+            {
+                extension_verifier.is_extension_of_known_node(node.decision_header(), None)
+            }
             Some(locked_qc) => {
-                extension_verifier.is_extension_of_known_node(node.decision_header(), Some(locked_qc))
-                && qc.sequence_number() >= locked_qc.sequence_number()
+                extension_verifier
+                    .is_extension_of_known_node(node.decision_header(), Some(locked_qc))
+                    && qc.sequence_number() >= locked_qc.sequence_number()
             }
         }
     }

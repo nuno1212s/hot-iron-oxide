@@ -52,7 +52,7 @@ impl<RQ> ChainedProof<RQ> {
     pub fn qc(&self, qc_type: ProofQCType) -> Option<&ChainedQC> {
         self.qcs.get(&qc_type)
     }
-    
+
     pub fn proposal_message(&self) -> &StoredMessage<IronChainMessage<RQ>> {
         &self.proposal_message
     }

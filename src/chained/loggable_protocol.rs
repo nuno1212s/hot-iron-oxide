@@ -36,7 +36,7 @@ where
     RQ: SerMsg + SessionBased,
     CR: CryptoInformationProvider,
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
-    RP: Send + 'static
+    RP: Send + 'static,
 {
     type PersistableTypes = IronChainSer<RQ>;
 }
@@ -47,7 +47,7 @@ where
     RQ: SerMsg + SessionBased,
     CR: CryptoInformationProvider,
     NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>> + 'static,
-    RP: Send + 'static
+    RP: Send + 'static,
 {
     fn message_types() -> Vec<&'static str> {
         vec![VOTE_GENERIC, PROPOSAL_GENERIC, NEW_VIEW_GENERIC]
