@@ -1,8 +1,8 @@
-pub mod serialize;
+pub(super) mod serialize;
 
 use crate::chained::chained_decision_tree::ChainedDecisionNode;
 use crate::chained::ChainedQC;
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
+use crate::decision_tree::DecisionNodeHeader;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
 use getset::Getters;

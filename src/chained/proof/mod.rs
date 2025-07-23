@@ -1,5 +1,4 @@
 use crate::chained::chained_decision_tree::ChainedDecisionNode;
-use crate::chained::messages::serialize::IronChainSer;
 use crate::chained::messages::IronChainMessage;
 use crate::chained::ChainedQC;
 use atlas_common::collections::HashMap;
@@ -7,7 +6,6 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::networking::serialize::OrderProtocolProof;
-use atlas_core::ordering_protocol::ShareableConsensusMessage;
 use serde::{Deserialize, Serialize};
 use strum::{EnumCount, EnumIter};
 

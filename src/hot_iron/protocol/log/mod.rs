@@ -2,10 +2,6 @@ use crate::crypto::{
     combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner,
 };
 use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
-use crate::protocol::messages::{
-    ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType,
-};
-use crate::protocol::{QCType, QC};
 use crate::view::View;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
@@ -14,6 +10,8 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use getset::{Getters, MutGetters, Setters};
 use std::error::Error;
 use thiserror::Error;
+use crate::hot_iron::protocol::{QCType, QC};
+use crate::hot_iron::messages::{ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType};
 
 /// The log of votes for a given decision instance
 pub enum MsgDecisionLog {

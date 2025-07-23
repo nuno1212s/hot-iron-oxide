@@ -1,9 +1,8 @@
-use crate::chained::messages::serialize::IronChainSer;
 use crate::chained::protocol::ChainedHotStuffProtocol;
 use crate::config::HotIronInitConfig;
 use crate::crypto::{AtlasTHCryptoProvider, CryptoInformationProvider};
 use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertificate};
-use crate::req_aggr::{ReqAggregator, RequestAggr};
+use crate::req_aggr::RequestAggr;
 use crate::view::View;
 use crate::{get_f_for_n, get_n_for_f, get_quorum_for_n};
 use atlas_common::crypto::threshold_crypto::CombinedSignature;
@@ -24,13 +23,16 @@ use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock};
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 mod chained_decision_tree;
 mod loggable_protocol;
 pub mod messages;
 mod proof;
 mod protocol;
+pub(super) mod metrics;
+
+pub use messages::serialize::IronChainSer;
 
 type IronChainResult<RQ> = OPExecResult<
     DecisionMetadata<RQ, IronChainSer<RQ>>,

@@ -4,14 +4,6 @@ mod decision_test {
         get_partial_signature_for_message, AtlasTHCryptoProvider, CryptoInformationProvider,
     };
     use crate::decision_tree::{DecisionHandler, DecisionNode};
-    use crate::protocol::decision::{DecisionResult, DecisionState, HSDecision};
-    use crate::protocol::log::MsgLeaderDecisionLog;
-    use crate::protocol::messages::serialize::HotIronOxSer;
-    use crate::protocol::messages::{
-        HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
-        VoteType,
-    };
-    use crate::protocol::{HotIronDecisionHandler, QC};
     use crate::req_aggr::ReqAggregator;
     use crate::view::View;
     use anyhow::anyhow;
@@ -39,6 +31,11 @@ mod decision_test {
     use serde::{Deserialize, Serialize};
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
+    use crate::hot_iron::protocol::decision::{DecisionResult, DecisionState, HSDecision};
+    use crate::hot_iron::protocol::{HotIronDecisionHandler, QC};
+    use crate::hot_iron::protocol::log::MsgLeaderDecisionLog;
+    use crate::hot_iron::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType};
+    use crate::hot_iron::messages::serialize::HotIronOxSer;
 
     #[derive(Clone, Serialize, Deserialize)]
     struct BlankProtocol;

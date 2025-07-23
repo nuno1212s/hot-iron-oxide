@@ -1,14 +1,7 @@
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
 use crate::decision_tree::{DecisionHandler, DecisionNodeHeader};
-use crate::protocol::decision::{
-    DecisionError, DecisionFinalizationResult, DecisionPollResult, DecisionResult, HSDecision,
-};
-use crate::protocol::messages::serialize::HotIronOxSer;
-use crate::protocol::messages::HotFeOxMsg;
-use crate::protocol::QC;
 use crate::req_aggr::RequestAggr;
 use crate::view::View;
-use crate::{HotIronDecision, HotIronPollResult, HotIronResult};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo};
@@ -25,6 +18,12 @@ use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, instrument, warn};
+use crate::hot_iron::{HotIronDecision, HotIronPollResult, HotIronResult};
+use crate::hot_iron::protocol::decision::{DecisionError, DecisionFinalizationResult, DecisionPollResult, DecisionResult, HSDecision};
+use crate::hot_iron::messages::HotFeOxMsg;
+use crate::hot_iron::protocol::QC;
+use crate::hot_iron::messages::serialize::HotIronOxSer;
+
 
 pub(crate) struct HotStuffProtocol<RQ, NT>
 where

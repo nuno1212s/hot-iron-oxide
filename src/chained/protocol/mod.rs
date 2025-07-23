@@ -14,20 +14,18 @@ use crate::chained::{
     ChainedDecisionHandler, IronChainDecision, IronChainPollResult, IronChainResult,
 };
 use crate::crypto::{CryptoInformationProvider, CryptoProvider};
-use crate::decision_tree::{DecisionHandler, DecisionNodeHeader, TQuorumCertificate};
-use crate::protocol::hotstuff::Signals;
-use crate::req_aggr::{ReqAggregator, RequestAggr};
+use crate::decision_tree::{DecisionNodeHeader, TQuorumCertificate};
+use crate::req_aggr::RequestAggr;
 use crate::view::View;
-use crate::HotIronPollResult;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo};
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::messages::{ClientRqInfo, SessionBased};
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{
-    BatchedDecision, Decision, DecisionsAhead, OPPollResult, ProtocolConsensusDecision,
+    BatchedDecision, Decision, DecisionsAhead, ProtocolConsensusDecision,
     ShareableMessage,
 };
 use atlas_core::timeouts::timeout::TimeoutModHandle;
@@ -37,6 +35,7 @@ use std::error::Error;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
+use crate::hot_iron::protocol::hotstuff::Signals;
 
 const PROTOCOL_PHASES: u8 = 4;
 const PROTOCOL_PHASES_USIZE: usize = PROTOCOL_PHASES as usize;
@@ -169,14 +168,12 @@ where
     {
         while let Some(seq) = self.signals.pop_signalled() {
             let poll_result = {
-                let rq_aggr = self.request_aggr.clone();
-
                 let Some(decision) = self.get_decision(seq) else {
                     error!("Decision not found for seq_no: {seq:?}");
                     continue;
                 };
 
-                decision.poll::<_, _, CP, _>(&*rq_aggr, crypto, decision_handler, network)
+                decision.poll::< _, CP, _>( crypto, decision_handler, network)
             };
 
             match poll_result {
@@ -333,7 +330,7 @@ where
                 let rq_aggr = self.request_aggr.clone();
 
                 if let Some(decision) = self.get_decision(next_decision) {
-                    decision.handle_previous_node_completed_leader::<CR, CP, NT>(
+                    decision.handle_previous_node_completed_leader::<CR, NT>(
                         &rq_aggr, crypto, network, &qc,
                     );
                 } else {
@@ -424,7 +421,7 @@ where
             }
         };
 
-        self.decision_list[decision_index]
+        self.decision_list[decision_index - 1]
             .advance_state(ChainedDecisionState::PreCommit, decision_handler);
 
         let b_1 = match self.chain_link(b_2) {
@@ -440,7 +437,7 @@ where
             }
         };
 
-        self.decision_list[decision_index - 1]
+        self.decision_list[decision_index - 2]
             .advance_state(ChainedDecisionState::Commit, decision_handler);
 
         let _ = match self.chain_link(b_1) {
@@ -456,7 +453,7 @@ where
             }
         };
 
-        self.decision_list[decision_index - 2]
+        self.decision_list[decision_index - 3]
             .advance_state(ChainedDecisionState::Decide, decision_handler);
 
         // Set all other previous, pending, requests to finalized state as this chain
@@ -483,11 +480,7 @@ where
             })?;
 
         let first_link_justify = first_link.justify();
-
-        info!("First link header: {first_link_header:?}. Chaining link for node: {:?}, justify: {first_link_justify:?}.\
-         Current pending nodes: {:?}", 
-            first_link.decision_header().previous_block(), &self.pending_nodes);
-
+        
         let b_2 = match (
             first_link_justify,
             first_link.decision_header().previous_block(),

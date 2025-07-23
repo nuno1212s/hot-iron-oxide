@@ -1,9 +1,8 @@
 use crate::chained::messages::{NewViewMessage, VoteDetails, VoteMessage};
 use crate::chained::ChainedQC;
 use crate::crypto::{
-    combine_partial_signatures, CryptoInformationProvider, CryptoProvider, CryptoSignatureCombiner,
+    combine_partial_signatures, CryptoInformationProvider, CryptoProvider,
 };
-use crate::decision_tree::DecisionNodeHeader;
 use crate::view::View;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
@@ -12,7 +11,6 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use getset::Getters;
 use std::collections::hash_map::Entry;
-use std::collections::HashSet;
 use std::error::Error;
 use thiserror::Error;
 

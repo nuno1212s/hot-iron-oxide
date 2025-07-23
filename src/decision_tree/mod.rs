@@ -1,4 +1,3 @@
-use crate::chained::ChainedQC;
 use crate::view::View;
 use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::crypto::threshold_crypto::CombinedSignature;

@@ -1,7 +1,6 @@
 pub mod serialize;
 
 use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
-use crate::protocol::QC;
 use atlas_common::crypto::threshold_crypto::PartialSignature;
 use atlas_common::ordering::{Orderable, SeqNo};
 use enum_map::Enum;
@@ -10,6 +9,7 @@ use getset::Getters;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use strum::EnumDiscriminants;
+use crate::hot_iron::protocol::QC;
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, EnumDiscriminants)]

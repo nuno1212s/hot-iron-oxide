@@ -9,7 +9,6 @@ use crate::chained::protocol::msg_queue::ChainedHotStuffMsgQueue;
 use crate::chained::{ChainedDecisionHandler, ChainedQC};
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
 use crate::decision_tree::{DecisionNodeHeader, TQuorumCertificate};
-use crate::metric::SIGNATURE_VOTE_LATENCY_ID;
 use crate::req_aggr::{ReqAggregator, RequestAggr};
 use crate::view::View;
 use atlas_common::crypto::hash::Digest;
@@ -22,12 +21,11 @@ use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::ShareableMessage;
 use atlas_metrics::metrics::metric_duration;
 use getset::{Getters, Setters};
-#[cfg(feature = "serialize_serde")]
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, info, trace, warn};
+use crate::chained::metrics::ConsensusMetric;
 
 #[derive(Debug, PartialOrd, Ord, Eq, PartialEq)]
 pub(super) enum ChainedDecisionState {
@@ -71,6 +69,7 @@ pub(super) struct ChainedDecision<RQ> {
     decision_qc: Option<ChainedQC>,
     msg_queue: ChainedHotStuffMsgQueue<RQ>,
     decision_log: DecisionLog,
+    metrics: ConsensusMetric,
 }
 
 impl<RQ> ChainedDecision<RQ>
@@ -90,12 +89,18 @@ where
         node_id: NodeId,
         state: ChainedDecisionState,
     ) -> ChainedDecision<RQ> {
-        let decision_log = if node_id == view.primary() {
-            DecisionLog::Leader(NewViewStore::default())
+        let (decision_log, metrics) = if node_id == view.primary() {
+            (
+                DecisionLog::Leader(NewViewStore::default()),
+                ConsensusMetric::leader_decision(),
+            )
         } else if node_id == view.next_view().primary() {
-            DecisionLog::NextLeader(VoteStore::default())
+            (
+                DecisionLog::NextLeader(VoteStore::default()),
+                ConsensusMetric::next_leader_decision(),
+            )
         } else {
-            DecisionLog::Replica
+            (DecisionLog::Replica, ConsensusMetric::replica_consensus_decision())
         };
 
         Self {
@@ -106,6 +111,7 @@ where
             decision_node_digest: None,
             msg_queue: ChainedHotStuffMsgQueue::default(),
             decision_log,
+            metrics,
         }
     }
 
@@ -118,7 +124,7 @@ where
         state: ChainedDecisionState,
         decision_handler: &mut ChainedDecisionHandler,
     ) {
-        info!(
+        debug!(
             "Checking if can advance state from {:?} to {:?} for view: {:?}-> {}",
             self.state,
             state,
@@ -150,41 +156,24 @@ where
         }
     }
 
-    pub(super) fn poll<RQA, CR, CP, NT>(
+    pub(super) fn poll<CR, CP, NT>(
         &mut self,
-        request_aggr: &RQA,
         crypto: &Arc<CR>,
         decision_handler: &ChainedDecisionHandler,
         network: &Arc<NT>,
     ) -> ChainedDecisionPollResult<RQ>
     where
-        RQA: ReqAggregator<RQ>,
         CR: CryptoInformationProvider,
         CP: CryptoProvider,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,
     {
         return match &self.state {
-            ChainedDecisionState::Init if !self.is_leader() => {
+            ChainedDecisionState::Init  => {
                 self.generate_and_send_new_view_message::<CR, CP, NT>(
                     decision_handler.latest_locked_qc_ref().cloned(),
                     network,
                     crypto,
                 );
-
-                self.state = ChainedDecisionState::Prepare(0, false);
-
-                ChainedDecisionPollResult::ReceiveMsg
-            }
-            ChainedDecisionState::Init if self.is_leader() => {
-                match decision_handler.latest_prepare_qc_ref().cloned() {
-                    None => {}
-                    Some(latest_qc) => {
-                        info!(
-                            "Leader is initializing with latest prepare QC: {:?}",
-                            latest_qc
-                        );
-                    }
-                }
 
                 self.state = ChainedDecisionState::Prepare(0, false);
 
@@ -308,7 +297,7 @@ where
 
         *received += 1;
 
-        info!(
+        debug!(
             "Processing {:?} from {:?} - Received {}. Proposed {}, Quorum {}",
             message.message().message(),
             message.header().from(),
@@ -326,7 +315,7 @@ where
 
             *proposed = true;
 
-            let decision_node_header = self.generate_and_send_proposal::<CR, CP, NT>(
+            let decision_node_header = self.generate_and_send_proposal::<CR, NT>(
                 rq_aggr,
                 crypto,
                 network,
@@ -383,7 +372,7 @@ where
             }
         };
 
-        info!(
+        debug!(
             "Processing {:?} as next leader from {:?} in state Prepare. Vote Count: {}, Quorum: {}",
             message.message().message(),
             message.header().from(),
@@ -410,7 +399,7 @@ where
             // Perform the generic as leader phase, as we are the leader of the next view
             let vote_details = self.decision_log.as_mut_next_leader().get_high_justify_qc();
 
-            debug!("High justify QC: {:?}", vote_details);
+            trace!("High justify QC: {:?}", vote_details);
 
             match (vote_details, decision_handler.latest_locked_qc_ref()) {
                 (Some(qc), Some(latest_locked_qc))
@@ -463,14 +452,14 @@ where
                 return ChainedDecisionResult::MessageIgnored;
             }
 
-            info!(
+            debug!(
                 "Proposal message from {:?} is safe, processing it.",
                 message.header().from()
             );
 
             self.set_decision_qc(Some(qc.clone()));
         } else {
-            info!(
+            debug!(
                 "Proposal message from {:?} has no justification, processing it as root block.",
                 message.header().from()
             );
@@ -480,7 +469,7 @@ where
 
         self.decision_node_digest = Some(proposal.decision_header().current_block_digest());
 
-        info!(
+        debug!(
             "Processing {:?} from {:?} in state {:?}. Decision Node Header: {:?}",
             message.message().message(),
             message.header().from(),
@@ -501,8 +490,6 @@ where
 
             move || {
                 // Send the message signing processing to the thread pool
-                let start_time = Instant::now();
-
                 let vote_details = VoteDetails::new(decision_node_header, justify);
 
                 let msg_signature = get_partial_signature_for_message::<CR, CP, VoteDetails>(
@@ -510,8 +497,6 @@ where
                     view.sequence_number(),
                     &vote_details,
                 );
-
-                metric_duration(SIGNATURE_VOTE_LATENCY_ID, start_time.elapsed());
 
                 let vote_msg =
                     IronChainMessageType::Vote(VoteMessage::new(vote_details, msg_signature));
@@ -524,14 +509,14 @@ where
                     true,
                 );
 
-                info!("Sent vote message to next leader: {:?}", next_leader);
+                debug!("Sent vote message to next leader: {:?}", next_leader);
             }
         });
 
         ChainedDecisionResult::VoteGenerated(proposal, message)
     }
 
-    pub(super) fn handle_previous_node_completed_leader<CR, CP, NT>(
+    pub(super) fn handle_previous_node_completed_leader<CR, NT>(
         &mut self,
         rq_aggr: &Arc<RequestAggr<RQ>>,
         crypto: &Arc<CR>,
@@ -540,10 +525,9 @@ where
     ) -> DecisionNodeHeader
     where
         CR: CryptoInformationProvider,
-        CP: CryptoProvider,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,
     {
-        self.generate_and_send_proposal::<CR, CP, NT>(
+        self.generate_and_send_proposal::<CR, NT>(
             rq_aggr,
             crypto,
             network,
@@ -571,14 +555,15 @@ where
                 let signature = get_partial_signature_for_message::<CR, CP, Option<ChainedQC>>(
                     &*crypto, seq_no, &previous,
                 );
-
+                
                 let new_view = if let Some(qc) = previous {
                     NewViewMessage::from_previous_qc(qc, signature)
                 } else {
                     NewViewMessage::from_empty(signature)
                 };
 
-                info!("Sending new view message: {:?}", new_view);
+                debug!("Sending new view message: {:?}", new_view);
+
                 let _ = network.send(
                     IronChainMessage::new(seq_no, IronChainMessageType::NewView(new_view)),
                     primary,
@@ -588,7 +573,7 @@ where
         });
     }
 
-    fn generate_and_send_proposal<CR, CP, NT>(
+    fn generate_and_send_proposal<CR, NT>(
         &mut self,
         rq_aggr: &Arc<RequestAggr<RQ>>,
         crypto: &Arc<CR>,
@@ -597,7 +582,6 @@ where
     ) -> DecisionNodeHeader
     where
         CR: CryptoInformationProvider,
-        CP: CryptoProvider,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,
     {
         let (requests, digest) = rq_aggr.take_pool_requests();

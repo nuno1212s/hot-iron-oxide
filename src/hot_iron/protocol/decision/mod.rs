@@ -1,21 +1,10 @@
 mod test;
 
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
-use crate::decision_tree::{DecisionNode, DecisionNodeHeader};
+use crate::decision_tree::{DecisionExtensionVerifier, DecisionNode, DecisionNodeHeader};
 use crate::metric::{
-    ConsensusDecisionMetric, SIGNATURE_PROPOSAL_LATENCY_ID, SIGNATURE_VOTE_LATENCY_ID,
+    SIGNATURE_PROPOSAL_LATENCY_ID, SIGNATURE_VOTE_LATENCY_ID,
 };
-use crate::protocol::log::{
-    DecisionLog, MsgDecisionLog, MsgLeaderDecisionLog, MsgReplicaDecisionLog, NewViewAcceptError,
-    NewViewGenerateError, VoteAcceptError, VoteStoreError,
-};
-use crate::protocol::messages::serialize::HotIronOxSer;
-use crate::protocol::messages::{
-    HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage,
-    VoteType, VoteTypes,
-};
-use crate::protocol::msg_queue::HotStuffTBOQueue;
-use crate::protocol::{HotIronDecisionHandler, QC};
 use crate::req_aggr::ReqAggregator;
 use crate::view::View;
 use atlas_common::node_id::NodeId;
@@ -34,6 +23,12 @@ use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{error, info, trace, warn};
+use crate::hot_iron::metric::ConsensusDecisionMetric;
+use crate::hot_iron::protocol::log::{DecisionLog, MsgDecisionLog, NewViewAcceptError, NewViewGenerateError, VoteAcceptError, VoteStoreError};
+use crate::hot_iron::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType, VoteTypes};
+use crate::hot_iron::protocol::msg_queue::HotStuffTBOQueue;
+use crate::hot_iron::protocol::{HotIronDecisionHandler, QC};
+use crate::hot_iron::messages::serialize::HotIronOxSer;
 
 #[derive(Debug)]
 pub enum DecisionState {
@@ -364,16 +359,10 @@ where
                     DecisionNode::create_root(&self.view, digest, pooled_request)
                 };
 
-                let start_signature_time = Instant::now();
-
                 let new_qc = leader_log
                     .new_view_store()
                     .create_new_qc::<_, CP>(&**crypto, node.decision_header())?;
 
-                metric_duration(
-                    SIGNATURE_PROPOSAL_LATENCY_ID,
-                    start_signature_time.elapsed(),
-                );
                 self.consensus_metric
                     .as_leader()
                     .register_proposal_sent(ProposalTypes::Decide);
@@ -387,14 +376,8 @@ where
                     VoteType::NewView(_) => unreachable!(),
                 };
 
-                let start_signature_time = Instant::now();
-
                 let qc = leader_log.generate_qc::<CR, CP>(&**crypto, &self.view, proposal_type)?;
 
-                metric_duration(
-                    SIGNATURE_PROPOSAL_LATENCY_ID,
-                    start_signature_time.elapsed(),
-                );
                 self.consensus_metric
                     .as_leader()
                     .register_proposal_sent(proposal_type);
@@ -451,9 +434,10 @@ where
                 let ProposalType::Prepare(node, qc) = proposal.proposal_type() else {
                     unreachable!()
                 };
+                
+                let verifier = DecisionNodeExtensionVerifier;
 
-                todo!("Handle Prepare proposal in replica");
-                /*if !dec_handler.safe_node(node, qc) {
+                if !dec_handler.safe_node(node, qc, &verifier) {
                     warn!(
                         "Node {:?}, QC {:?} does not extend from {:?}",
                         node,
@@ -462,7 +446,7 @@ where
                     );
 
                     return Err(DecisionError::InvalidDecisionNode);
-                }*/
+                }
 
                 self.decision_log.set_current_proposal(Some(node.clone()));
 
@@ -522,15 +506,11 @@ where
                 move || {
                     // Send the message signing processing to the threadpool
 
-                    let start_time = Instant::now();
-
                     let msg_signature = get_partial_signature_for_message::<CR, CP, VoteType>(
                         &*crypto,
                         view.sequence_number(),
                         &vote_type,
                     );
-
-                    metric_duration(SIGNATURE_VOTE_LATENCY_ID, start_time.elapsed());
 
                     let vote_msg = HotFeOxMsgType::Vote(VoteMessage::new(vote_type, msg_signature));
 
@@ -866,6 +846,24 @@ where
             client_rq_infos,
             header.current_block_digest(),
         )
+    }
+}
+
+struct DecisionNodeExtensionVerifier;
+
+impl DecisionExtensionVerifier<QC> for DecisionNodeExtensionVerifier {
+    fn is_extension_of_known_node(
+        &self,
+        node: &DecisionNodeHeader,
+        locked_qc: Option<&QC>,
+    ) -> bool {
+        match (node.previous_block(), locked_qc) {
+            (Some(prev), Some(latest_qc)) => {
+                *prev == latest_qc.decision_node().current_block_digest()
+            }
+            (None, None) => true,
+            _ => false,
+        }
     }
 }
 

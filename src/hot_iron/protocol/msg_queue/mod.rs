@@ -1,8 +1,8 @@
-use crate::protocol::decision::DecisionState;
-use crate::protocol::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalTypes, VoteTypes};
 use atlas_core::ordering_protocol::ShareableMessage;
 use enum_map::EnumMap;
 use std::collections::VecDeque;
+use crate::hot_iron::messages::{HotFeOxMsg, HotFeOxMsgType, VoteTypes, ProposalTypes};
+use crate::hot_iron::protocol::decision::DecisionState;
 
 pub struct HotStuffTBOQueue<D> {
     get_queue: bool,

@@ -1,7 +1,5 @@
 mod test;
 
-use crate::protocol::messages::serialize::serialize_vote_message;
-use crate::protocol::messages::VoteType;
 use atlas_common::crypto::threshold_crypto::{
     CombineSignatureError, CombinedSignature, PartialSignature, PrivateKeyPart, PrivateKeySet,
     PublicKeyPart, PublicKeySet, VerifySignatureError,
@@ -11,7 +9,11 @@ use atlas_common::ordering::SeqNo;
 use atlas_common::serialization_helper::SerMsg;
 use getset::Getters;
 use std::error::Error;
+use std::time::Instant;
+use atlas_metrics::metrics::metric_duration;
 use thiserror::Error;
+use crate::metric::{SIGNATURE_PROPOSAL_LATENCY_ID, SIGNATURE_VOTE_LATENCY_ID};
+use crate::serialize::serialize_vote_message;
 
 /// Threshold crypto related information storage
 #[derive(Getters)]
@@ -87,9 +89,15 @@ where
     CP: CryptoPartialSigProvider,
     VT: SerMsg,
 {
+    let start = Instant::now();
+    
     let bytes = serialize_vote_message(view, vote_msg);
 
-    CP::sign_message(crypto_info, &bytes)
+    let result = CP::sign_message(crypto_info, &bytes);
+    
+    metric_duration(SIGNATURE_VOTE_LATENCY_ID, start.elapsed());
+    
+    result
 }
 
 pub(crate) fn combine_partial_signatures<CR, CP>(
@@ -100,7 +108,13 @@ where
     CR: CryptoInformationProvider,
     CP: CryptoSignatureCombiner,
 {
-    CP::combine_signatures(crypto_info, signatures)
+    let start = Instant::now();
+    
+    let result = CP::combine_signatures(crypto_info, signatures);
+    
+    metric_duration(SIGNATURE_PROPOSAL_LATENCY_ID, start.elapsed());
+        
+    result
 }
 
 pub struct AtlasTHCryptoProvider;

@@ -4,12 +4,10 @@ use crate::decision_tree::DecisionNodeHeader;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
-use atlas_core::ordering_protocol::networking::serialize::{
-    OrderProtocolVerificationHelper, OrderingProtocolMessage, PermissionedOrderingProtocolMessage,
-};
-use atlas_core::ordering_protocol::PermissionedOrderingProtocol;
+use atlas_core::ordering_protocol::networking::serialize::{OrderProtocolVerificationHelper, OrderingProtocolMessage, PermissionedOrderingProtocolMessage};
 use std::marker::PhantomData;
 use std::sync::Arc;
+use crate::view::View;
 
 pub struct IronChainSer<RQ>(PhantomData<fn() -> RQ>);
 
@@ -35,3 +33,8 @@ where
         Ok(())
     }
 }
+
+impl<RQ> PermissionedOrderingProtocolMessage for IronChainSer<RQ> {
+    type ViewInfo = View;
+}
+

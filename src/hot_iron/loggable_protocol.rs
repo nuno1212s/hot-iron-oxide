@@ -1,10 +1,10 @@
 use crate::crypto::CryptoInformationProvider;
-use crate::protocol::messages::serialize::HotIronOxSer;
-use crate::protocol::messages::{HotFeOxMsgType, ProposalType, VoteType};
-use crate::protocol::proof::Proof;
-use crate::HotIron;
-use crate::SerMsg;
+use crate::hot_iron::messages::serialize::HotIronOxSer;
+use crate::hot_iron::messages::{HotFeOxMsgType, ProposalType, VoteType};
+use crate::hot_iron::protocol::proof::Proof;
+use crate::hot_iron::HotIron;
 use atlas_common::ordering::Orderable;
+use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
 use atlas_core::messages::SessionBased;
@@ -18,7 +18,7 @@ use atlas_core::ordering_protocol::networking::serialize::{
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{
     BatchedDecision, DecisionAD, DecisionMetadata, ProtocolConsensusDecision, ProtocolMessage,
-    ShareableConsensusMessage, ShareableMessage,
+    ShareableConsensusMessage,
 };
 use std::sync::Arc;
 

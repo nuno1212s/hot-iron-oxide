@@ -11,7 +11,6 @@ use strum::EnumCount;
 pub(crate) mod decision;
 pub(crate) mod hotstuff;
 mod log;
-pub mod messages;
 mod msg_queue;
 pub mod proof;
 
