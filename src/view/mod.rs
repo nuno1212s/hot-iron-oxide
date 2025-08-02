@@ -1,5 +1,4 @@
 pub mod leader_allocation;
-pub mod serialization;
 
 use crate::view::leader_allocation::{LeaderAllocator, RoundRobinLA};
 use atlas_common::node_id::NodeId;

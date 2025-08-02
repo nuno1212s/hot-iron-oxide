@@ -4,6 +4,7 @@ use crate::chained::messages::{
     IronChainMessage, IronChainMessageType, NewViewMessage, ProposalMessage, VoteDetails,
     VoteMessage,
 };
+use crate::chained::metrics::ConsensusMetric;
 use crate::chained::protocol::log::{DecisionLog, NewViewGenerateError, NewViewStore, VoteStore};
 use crate::chained::protocol::msg_queue::ChainedHotStuffMsgQueue;
 use crate::chained::{ChainedDecisionHandler, ChainedQC};
@@ -19,13 +20,10 @@ use atlas_common::threadpool;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::ShareableMessage;
-use atlas_metrics::metrics::metric_duration;
 use getset::{Getters, Setters};
 use std::sync::Arc;
-use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, info, trace, warn};
-use crate::chained::metrics::ConsensusMetric;
 
 #[derive(Debug, PartialOrd, Ord, Eq, PartialEq)]
 pub(super) enum ChainedDecisionState {
@@ -100,7 +98,10 @@ where
                 ConsensusMetric::next_leader_decision(),
             )
         } else {
-            (DecisionLog::Replica, ConsensusMetric::replica_consensus_decision())
+            (
+                DecisionLog::Replica,
+                ConsensusMetric::replica_consensus_decision(),
+            )
         };
 
         Self {
@@ -167,8 +168,8 @@ where
         CP: CryptoProvider,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,
     {
-        return match &self.state {
-            ChainedDecisionState::Init  => {
+        match &self.state {
+            ChainedDecisionState::Init => {
                 self.generate_and_send_new_view_message::<CR, CP, NT>(
                     decision_handler.latest_locked_qc_ref().cloned(),
                     network,
@@ -191,9 +192,7 @@ where
 
                 ChainedDecisionPollResult::ReceiveMsg
             }
-        };
-
-        ChainedDecisionPollResult::ReceiveMsg
+        }
     }
 
     fn is_leader(&self) -> bool {
@@ -295,6 +294,8 @@ where
             return Ok(ChainedDecisionResult::MessageQueued);
         };
 
+        self.metrics.as_leader_decision().register_vote_received();
+
         *received += 1;
 
         debug!(
@@ -307,11 +308,15 @@ where
         );
 
         if *received >= self.view.quorum() && !*proposed {
+            self.metrics
+                .as_leader_decision()
+                .register_last_vote_received();
+
             let decision_log_high_qc = self
                 .decision_log
                 .as_mut_leader()
                 .get_high_qc()
-                .map_err(|err| NewViewGenerateError::FailedToGenerateNewViewQC(err))?;
+                .map_err(NewViewGenerateError::FailedToGenerateNewViewQC)?;
 
             *proposed = true;
 
@@ -353,6 +358,9 @@ where
                     .as_mut_next_leader()
                     .accept_vote(message.header().from(), vote_msg.clone())
                 {
+                    self.metrics
+                        .as_next_leader_decision()
+                        .register_vote_received();
                     votes
                 } else {
                     warn!(
@@ -382,6 +390,9 @@ where
 
         if vote_count >= self.view.quorum() && !self.decision_log.as_mut_next_leader().is_proposed()
         {
+            self.metrics
+                .as_next_leader_decision()
+                .register_last_vote_received();
             self.decision_log.as_mut_next_leader().set_proposed(true);
 
             let qc = self
@@ -413,6 +424,11 @@ where
                 _ => {}
             }
 
+            //TODO: This should be done only when the proposal is actually sent in
+            // The next decision, but for now we do it here
+            self.metrics
+                .as_next_leader_decision()
+                .register_proposal_sent();
             Ok(ChainedDecisionResult::NextLeaderMessages(message, qc))
         } else {
             Ok(ChainedDecisionResult::MessageProcessed(message))
@@ -465,6 +481,10 @@ where
             );
         }
 
+        self.metrics
+            .as_replica_consensus_decision()
+            .register_proposal_received();
+
         let proposal = proposal_message.into_parts();
 
         self.decision_node_digest = Some(proposal.decision_header().current_block_digest());
@@ -488,6 +508,8 @@ where
 
             let justify = proposal.justify().clone();
 
+            let metric = self.metrics.as_replica_consensus_decision().clone();
+
             move || {
                 // Send the message signing processing to the thread pool
                 let vote_details = VoteDetails::new(decision_node_header, justify);
@@ -509,6 +531,8 @@ where
                     true,
                 );
 
+                metric.register_vote_sent();
+
                 debug!("Sent vote message to next leader: {:?}", next_leader);
             }
         });
@@ -527,12 +551,7 @@ where
         CR: CryptoInformationProvider,
         NT: OrderProtocolSendNode<RQ, IronChainSer<RQ>>,
     {
-        self.generate_and_send_proposal::<CR, NT>(
-            rq_aggr,
-            crypto,
-            network,
-            Some(previous_high_qc),
-        )
+        self.generate_and_send_proposal::<CR, NT>(rq_aggr, crypto, network, Some(previous_high_qc))
     }
 
     fn generate_and_send_new_view_message<CR, CP, NT>(
@@ -555,7 +574,7 @@ where
                 let signature = get_partial_signature_for_message::<CR, CP, Option<ChainedQC>>(
                     &*crypto, seq_no, &previous,
                 );
-                
+
                 let new_view = if let Some(qc) = previous {
                     NewViewMessage::from_previous_qc(qc, signature)
                 } else {
@@ -618,6 +637,10 @@ where
     }
 
     pub(super) fn finalize(self) -> Result<Digest, FinalizeDecisionError> {
+        self.metrics
+            .as_replica_consensus_decision()
+            .register_proposal_received();
+
         self.decision_node_digest
             .ok_or(FinalizeDecisionError::FailedToFinalizeDecisionMissingDigest)
     }

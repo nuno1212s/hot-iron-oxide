@@ -2,9 +2,12 @@ mod test;
 
 use crate::crypto::{get_partial_signature_for_message, CryptoInformationProvider, CryptoProvider};
 use crate::decision_tree::{DecisionExtensionVerifier, DecisionNode, DecisionNodeHeader};
-use crate::metric::{
-    SIGNATURE_PROPOSAL_LATENCY_ID, SIGNATURE_VOTE_LATENCY_ID,
-};
+use crate::hot_iron::messages::serialize::HotIronOxSer;
+use crate::hot_iron::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType, VoteTypes};
+use crate::hot_iron::metric::ConsensusDecisionMetric;
+use crate::hot_iron::protocol::log::{DecisionLog, MsgDecisionLog, NewViewAcceptError, NewViewGenerateError, VoteAcceptError, VoteStoreError};
+use crate::hot_iron::protocol::msg_queue::HotStuffTBOQueue;
+use crate::hot_iron::protocol::{HotIronDecisionHandler, QC};
 use crate::req_aggr::ReqAggregator;
 use crate::view::View;
 use atlas_common::node_id::NodeId;
@@ -15,20 +18,12 @@ use atlas_core::messages::{ClientRqInfo, SessionBased};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::OrderProtocolSendNode;
 use atlas_core::ordering_protocol::{BatchedDecision, ProtocolConsensusDecision, ShareableMessage};
-use atlas_metrics::metrics::metric_duration;
 use derive_more::with_trait::Display;
 use getset::{Getters, Setters};
 use std::error::Error;
 use std::sync::Arc;
-use std::time::Instant;
 use thiserror::Error;
 use tracing::{error, info, trace, warn};
-use crate::hot_iron::metric::ConsensusDecisionMetric;
-use crate::hot_iron::protocol::log::{DecisionLog, MsgDecisionLog, NewViewAcceptError, NewViewGenerateError, VoteAcceptError, VoteStoreError};
-use crate::hot_iron::messages::{HotFeOxMsg, HotFeOxMsgType, ProposalMessage, ProposalType, ProposalTypes, VoteMessage, VoteType, VoteTypes};
-use crate::hot_iron::protocol::msg_queue::HotStuffTBOQueue;
-use crate::hot_iron::protocol::{HotIronDecisionHandler, QC};
-use crate::hot_iron::messages::serialize::HotIronOxSer;
 
 #[derive(Debug)]
 pub enum DecisionState {
